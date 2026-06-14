@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../theme/app_theme.dart';
+import 'legal/privacy_policy_screen.dart';
+import 'legal/terms_screen.dart';
 import '../widgets/rm_widgets.dart';
 
 final supabase = Supabase.instance.client;
@@ -433,7 +435,7 @@ class _LoginScreenState extends State<LoginScreen>
                                   Text(
                                     _awaitingCode
                                         ? 'Enter your login code'
-                                        : 'Sign in to RingMaster Club',
+                                        : 'Log in or create your RingMaster Club account',
                                     textAlign: TextAlign.center,
                                     style: Theme.of(context)
                                         .textTheme
@@ -444,7 +446,7 @@ class _LoginScreenState extends State<LoginScreen>
                                   Text(
                                     _awaitingCode
                                         ? 'We sent a 6-digit code to ${_pendingEmail ?? ''}.'
-                                        : 'Enter your email address to receive a one-time login code.',
+                                        : 'Enter your email to receive a secure 6-digit code for membership, club tools, and account access.',
                                     textAlign: TextAlign.center,
                                     style: Theme.of(context).textTheme.bodySmall,
                                   ),
@@ -482,9 +484,48 @@ class _LoginScreenState extends State<LoginScreen>
                                               )
                                             : const Icon(Icons.send_outlined),
                                         label: Text(
-                                          _busy ? 'Sending...' : 'Send Code',
+                                          _busy ? 'Sending...' : 'Send login code',
                                         ),
                                       ),
+                                    ),
+                                    const SizedBox(height: AppSpacing.md),
+                                    Text(
+                                      'The code can only be used once and will expire after 20 minutes.',
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                    const SizedBox(height: AppSpacing.md),
+                                    Text(
+                                      'By continuing, you agree to the RingMaster Club Terms of Service and Privacy Policy.',
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                    const SizedBox(height: AppSpacing.xs),
+                                    Wrap(
+                                      alignment: WrapAlignment.center,
+                                      spacing: AppSpacing.sm,
+                                      children: [
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute<void>(
+                                                builder: (_) => const TermsScreen(),
+                                              ),
+                                            );
+                                          },
+                                          child: const Text('Terms of Service'),
+                                        ),
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute<void>(
+                                                builder: (_) => const PrivacyPolicyScreen(),
+                                              ),
+                                            );
+                                          },
+                                          child: const Text('Privacy Policy'),
+                                        ),
+                                      ],
                                     ),
                                   ] else ...[
                                     TextField(
