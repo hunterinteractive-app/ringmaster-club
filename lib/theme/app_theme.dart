@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const navy = Color(0xFF11285A);
-  static const navyDark = Color(0xFF0B1C43);
+  static const navy = Color(0xFF164828);
+  static const navyDark = Color(0xFF0E301C);
   static const gold = Color(0xFFD4A623);
-  static const bg = Color(0xFFF4F6FB);
+
+  static const clubGreen = Color(0xFF164828);
+  static const clubGreenDark = Color(0xFF0E301C);
+  static const clubGreenLight = Color(0xFF2F6B3E);
+
+  static const bg = Color(0xFFF4F7F4);
   static const surface = Colors.white;
-  static const text = Color(0xFF1B2440);
-  static const muted = Color(0xFF667085);
+  static const text = Color(0xFF18251D);
+  static const muted = Color(0xFF66756B);
   static const successBg = Color(0xFFEAF7EE);
   static const success = Color(0xFF1F7A3D);
   static const dangerBg = Color(0xFFFDECEC);
