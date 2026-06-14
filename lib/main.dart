@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config/supabase_config.dart';
+import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -73,55 +74,6 @@ class _RootState extends State<Root> {
       return const LoginScreen();
     }
 
-    return const _ClubHomePlaceholder();
-  }
-}
-
-class _ClubHomePlaceholder extends StatelessWidget {
-  const _ClubHomePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final user = Supabase.instance.client.auth.currentUser;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('RingMaster Club'),
-        actions: [
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: () async {
-              await Supabase.instance.client.auth.signOut();
-            },
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.groups_2_outlined,
-                size: 72,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'RingMaster Club is ready to build.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                user?.email ?? 'Signed in',
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    return const HomeScreen();
   }
 }

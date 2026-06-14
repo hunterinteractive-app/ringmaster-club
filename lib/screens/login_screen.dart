@@ -11,6 +11,7 @@ import '../theme/app_theme.dart';
 import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_screen.dart';
 import '../widgets/rm_widgets.dart';
+import 'home_screen.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -49,6 +50,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   static const String _devLoginEmail = 'test@ringmaster.dev';
   static const String _devLoginPassword = 'Smile!987';
+  bool _navigatingHome = false;
 
   @override
   void initState() {
@@ -103,9 +105,22 @@ class _LoginScreenState extends State<LoginScreen>
 
     _authSubscription = supabase.auth.onAuthStateChange.listen((data) {
       if (!mounted || data.session == null) return;
-      setState(() {});
+      _goHome();
     });
   }
+  void _goHome() {
+    if (!mounted || _navigatingHome) return;
+
+    _navigatingHome = true;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(
+        builder: (_) => const HomeScreen(),
+      ),
+      (_) => false,
+    );
+  }
+
 
   @override
   void dispose() {
@@ -160,7 +175,7 @@ class _LoginScreenState extends State<LoginScreen>
       );
 
       if (!mounted) return;
-      setState(() => _message = 'Dev login complete.');
+      _goHome();
     } on AuthException catch (error) {
       if (!mounted) return;
       setState(() => _message = 'Error: Dev login failed: ${error.message}');
@@ -214,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen>
       }
 
       if (!mounted) return;
-      setState(() => _message = 'Login complete.');
+      _goHome();
     } on AuthException catch (error) {
       if (!mounted) return;
       setState(() => _message = 'Error: ${error.message}');
@@ -340,7 +355,7 @@ class _LoginScreenState extends State<LoginScreen>
       }
 
       if (!mounted) return;
-      setState(() => _message = 'Login complete.');
+      _goHome();
     } on AuthException catch (error) {
       if (!mounted) return;
 
