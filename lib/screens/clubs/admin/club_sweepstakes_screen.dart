@@ -25,6 +25,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
 
   bool _isLoading = true;
   String? _errorMessage;
+  bool _sweepstakesAddonEnabled = false;
   String? _selectedSeasonId;
   String _standingFilter = 'all';
 
@@ -118,51 +119,81 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     });
 
     try {
-      final responses = await Future.wait([
-        _supabase
-            .from('club_sweepstakes_seasons')
-            .select(
-              'id,club_id,name,status,start_date,end_date,description,'
-              'points_notes,created_at,updated_at',
-            )
-            .eq('club_id', widget.club.clubId)
-            .order('start_date', ascending: false),
-        _supabase
-            .from('club_sweepstakes_divisions')
-            .select(
-              'id,club_id,season_id,name,code,description,species,'
-              'is_active,sort_order,created_at',
-            )
-            .eq('club_id', widget.club.clubId)
-            .order('sort_order', ascending: true),
-        _supabase
-            .from('club_sweepstakes_standings')
-            .select(
-              'id,club_id,season_id,division_id,exhibitor_name,'
-              'membership_number,species,breed,variety,points_from_results,'
-              'points_adjusted,total_points,show_count,last_points_at,'
-              'created_at,updated_at',
-            )
-            .eq('club_id', widget.club.clubId),
-        _supabase
-            .from('club_sweepstakes_adjustments')
-            .select(
-              'id,club_id,season_id,division_id,standing_id,exhibitor_name,'
-              'points_delta,reason,notes,created_at',
-            )
-            .eq('club_id', widget.club.clubId)
-            .order('created_at', ascending: false),
-      ]);
+      final clubRow = await _supabase
+          .from('clubs')
+          .select('sweepstakes_addon_enabled')
+          .eq('id', widget.club.clubId)
+          .single();
 
-      final seasons = (responses[0] as List)
-          .whereType<Map>()
-          .map((row) => _SweepstakesSeason.fromJson(Map<String, dynamic>.from(row)))
-          .toList();
+      final sweepstakesAddonEnabled =
+          clubRow['sweepstakes_addon_enabled'] == true;
 
-      final divisions = (responses[1] as List)
+      if (!sweepstakesAddonEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _sweepstakesAddonEnabled = false;
+          _seasons = const [];
+          _divisions = const [];
+          _standings = const [];
+          _adjustments = const [];
+          _selectedSeasonId = null;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final seasonsResponse = await _supabase
+          .from('club_sweepstakes_seasons')
+          .select(
+            'id,club_id,name,status,start_date,end_date,description,'
+            'points_notes,created_at,updated_at',
+          )
+          .eq('club_id', widget.club.clubId)
+          .order('start_date', ascending: false);
+
+      final divisionsResponse = await _supabase
+          .from('club_sweepstakes_divisions')
+          .select(
+            'id,club_id,season_id,name,code,description,species,'
+            'is_active,sort_order,created_at',
+          )
+          .eq('club_id', widget.club.clubId)
+          .order('sort_order', ascending: true);
+
+      final standingsResponse = await _supabase
+          .from('club_sweepstakes_standings')
+          .select(
+            'id,club_id,season_id,division_id,exhibitor_name,'
+            'membership_number,species,breed,variety,points_from_results,'
+            'points_adjusted,total_points,show_count,last_points_at,'
+            'created_at,updated_at',
+          )
+          .eq('club_id', widget.club.clubId);
+
+      final adjustmentsResponse = await _supabase
+          .from('club_sweepstakes_adjustments')
+          .select(
+            'id,club_id,season_id,division_id,standing_id,exhibitor_name,'
+            'points_delta,reason,notes,created_at',
+          )
+          .eq('club_id', widget.club.clubId)
+          .order('created_at', ascending: false);
+
+      final seasons = (seasonsResponse as List)
           .whereType<Map>()
           .map(
-            (row) => _SweepstakesDivision.fromJson(Map<String, dynamic>.from(row)),
+            (row) => _SweepstakesSeason.fromJson(
+              Map<String, dynamic>.from(row),
+            ),
+          )
+          .toList();
+
+      final divisions = (divisionsResponse as List)
+          .whereType<Map>()
+          .map(
+            (row) => _SweepstakesDivision.fromJson(
+              Map<String, dynamic>.from(row),
+            ),
           )
           .toList();
 
@@ -170,7 +201,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         for (final division in divisions) division.id: division,
       };
 
-      final standings = (responses[2] as List)
+      final standings = (standingsResponse as List)
           .whereType<Map>()
           .map((row) {
             final json = Map<String, dynamic>.from(row);
@@ -182,7 +213,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           })
           .toList();
 
-      final adjustments = (responses[3] as List)
+      final adjustments = (adjustmentsResponse as List)
           .whereType<Map>()
           .map(
             (row) => _SweepstakesAdjustment.fromJson(
@@ -194,6 +225,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
 
       if (!mounted) return;
       setState(() {
+        _sweepstakesAddonEnabled = true;
         _seasons = seasons;
         _divisions = divisions;
         _standings = standings;
@@ -201,7 +233,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         _selectedSeasonId ??= seasons.isEmpty ? null : seasons.first.id;
         if (_selectedSeasonId != null &&
             !seasons.any((season) => season.id == _selectedSeasonId)) {
-          _selectedSeasonId = seasons.first.id;
+          _selectedSeasonId = seasons.isEmpty ? null : seasons.first.id;
         }
         _isLoading = false;
       });
@@ -214,7 +246,29 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     }
   }
 
+  void _showLockedFeature() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sweepstakes Requires an Add-on'),
+        content: const Text(
+          'Sweepstakes seasons, divisions, standings, manual adjustments, and show result imports are available with the Sweepstakes Add-on. The club owner can enable this when the club is ready to use it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openSeasonEditor({_SweepstakesSeason? existing}) async {
+    if (!_sweepstakesAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -228,6 +282,10 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   }
 
   Future<void> _openDivisionEditor({_SweepstakesDivision? existing}) async {
+    if (!_sweepstakesAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     final season = _selectedSeason;
     if (season == null) return;
 
@@ -245,6 +303,10 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   }
 
   Future<void> _openAdjustmentEditor({_SweepstakesStanding? standing}) async {
+    if (!_sweepstakesAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     final season = _selectedSeason;
     if (season == null) return;
 
@@ -263,6 +325,10 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   }
 
   Future<void> _setSeasonStatus(_SweepstakesSeason season, String status) async {
+    if (!_sweepstakesAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     try {
       await _supabase.rpc(
         'set_club_sweepstakes_season_status',
@@ -294,9 +360,15 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openSeasonEditor(),
-        icon: const Icon(Icons.add),
-        label: const Text('New Season'),
+        onPressed: _isLoading
+            ? null
+            : _sweepstakesAddonEnabled
+                ? () => _openSeasonEditor()
+                : _showLockedFeature,
+        icon: Icon(_sweepstakesAddonEnabled ? Icons.add : Icons.lock_outline),
+        label: Text(
+          _sweepstakesAddonEnabled ? 'New Season' : 'Add-on Required',
+        ),
       ),
       body: _buildBody(),
     );
@@ -305,6 +377,13 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_sweepstakesAddonEnabled) {
+      return _LockedAddOnState(
+        clubName: widget.club.clubName,
+        onRefresh: _loadData,
+      );
     }
 
     if (_errorMessage != null && _seasons.isEmpty) {
@@ -527,6 +606,70 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
                 _AdjustmentCard(adjustment: adjustment),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _LockedAddOnState extends StatelessWidget {
+  const _LockedAddOnState({
+    required this.clubName,
+    required this.onRefresh,
+  });
+
+  final String clubName;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 34,
+                    backgroundColor: scheme.primaryContainer,
+                    foregroundColor: scheme.onPrimaryContainer,
+                    child: const Icon(Icons.lock_outline, size: 34),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Sweepstakes Add-on Required',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '$clubName does not currently have the Sweepstakes Add-on enabled.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'This add-on enables seasons, divisions, standings, manual adjustments, and RingMaster Show result imports.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Add-on Status'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

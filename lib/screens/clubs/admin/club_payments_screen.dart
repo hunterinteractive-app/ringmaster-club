@@ -23,6 +23,7 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
 
   bool _isLoading = true;
   String? _errorMessage;
+  bool _membershipManagementAddonEnabled = false;
   String _statusFilter = 'all';
   List<_PaymentRecord> _payments = const [];
   List<_MemberOption> _members = const [];
@@ -52,6 +53,26 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
     });
 
     try {
+      final clubRow = await _supabase
+          .from('clubs')
+          .select('membership_management_addon_enabled')
+          .eq('id', widget.club.clubId)
+          .single();
+
+      final membershipManagementAddonEnabled =
+          clubRow['membership_management_addon_enabled'] == true;
+
+      if (!membershipManagementAddonEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _membershipManagementAddonEnabled = false;
+          _members = const [];
+          _payments = const [];
+          _isLoading = false;
+        });
+        return;
+      }
+
       final responses = await Future.wait([
         _supabase
             .from('club_membership_payments')
@@ -104,6 +125,7 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
       if (!mounted) return;
 
       setState(() {
+        _membershipManagementAddonEnabled = true;
         _members = members;
         _payments = payments;
         _isLoading = false;
@@ -150,7 +172,30 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
         (total, payment) => total + payment.outstandingAmount,
       );
 
+  void _showLockedFeature() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Payments & Dues Requires an Add-on'),
+        content: const Text(
+          'Payment integration, dues tracking, offline payment records, balances, and receipt tracking are available with the Membership Management Add-on. The club owner can enable this when the club is ready to use it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openEditor({_PaymentRecord? existing}) async {
+    if (!_membershipManagementAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
+
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -180,9 +225,21 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
-        icon: const Icon(Icons.add_card),
-        label: const Text('Record Payment'),
+        onPressed: _isLoading
+            ? null
+            : _membershipManagementAddonEnabled
+                ? () => _openEditor()
+                : _showLockedFeature,
+        icon: Icon(
+          _membershipManagementAddonEnabled
+              ? Icons.add_card
+              : Icons.lock_outline,
+        ),
+        label: Text(
+          _membershipManagementAddonEnabled
+              ? 'Record Payment'
+              : 'Add-on Required',
+        ),
       ),
       body: _buildBody(),
     );
@@ -191,6 +248,13 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_membershipManagementAddonEnabled) {
+      return _LockedAddOnState(
+        clubName: widget.club.clubName,
+        onRefresh: _loadData,
+      );
     }
 
     if (_errorMessage != null && _payments.isEmpty) {
@@ -1256,4 +1320,67 @@ String _titleCase(String value) {
         (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
       )
       .join(' ');
+}
+class _LockedAddOnState extends StatelessWidget {
+  const _LockedAddOnState({
+    required this.clubName,
+    required this.onRefresh,
+  });
+
+  final String clubName;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 34,
+                    backgroundColor: scheme.primaryContainer,
+                    foregroundColor: scheme.onPrimaryContainer,
+                    child: const Icon(Icons.lock_outline, size: 34),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Membership Management Add-on Required',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '$clubName does not currently have the Membership Management Add-on enabled.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'This add-on enables payment integration, dues tracking, offline payment records, balances, and receipt tracking.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Add-on Status'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

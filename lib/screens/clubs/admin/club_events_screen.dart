@@ -23,6 +23,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
 
   bool _isLoading = true;
   String? _errorMessage;
+  bool _eventsAddonEnabled = false;
   String _statusFilter = 'published';
   String _typeFilter = 'all';
   List<_ClubEvent> _events = const [];
@@ -53,6 +54,26 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
     });
 
     try {
+      final clubRow = await _supabase
+          .from('clubs')
+          .select('events_meetings_addon_enabled')
+          .eq('id', widget.club.clubId)
+          .single();
+
+      final eventsAddonEnabled =
+          clubRow['events_meetings_addon_enabled'] == true;
+
+      if (!eventsAddonEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _eventsAddonEnabled = false;
+          _events = const [];
+          _documents = const [];
+          _isLoading = false;
+        });
+        return;
+      }
+
       final responses = await Future.wait([
         _supabase
             .from('club_events')
@@ -101,6 +122,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
 
       if (!mounted) return;
       setState(() {
+        _eventsAddonEnabled = true;
         _events = events;
         _documents = documents;
         _isLoading = false;
@@ -143,7 +165,29 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
     return _events.where((event) => event.status == status).length;
   }
 
+  void _showLockedFeature() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Meetings & Events Requires an Add-on'),
+        content: const Text(
+          'Meetings, agendas, event notices, and RSVP tools are available with the Events & Meetings Add-on. The club owner can enable this when the club is ready to use it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openEditor({_ClubEvent? existing}) async {
+    if (!_eventsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -158,6 +202,10 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
   }
 
   Future<void> _setStatus(_ClubEvent event, String status) async {
+    if (!_eventsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     try {
       await _supabase.rpc(
         'set_club_event_status',
@@ -189,9 +237,13 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
-        icon: const Icon(Icons.add),
-        label: const Text('Add Event'),
+        onPressed: _isLoading
+            ? null
+            : _eventsAddonEnabled
+                ? () => _openEditor()
+                : _showLockedFeature,
+        icon: Icon(_eventsAddonEnabled ? Icons.add : Icons.lock_outline),
+        label: Text(_eventsAddonEnabled ? 'Add Event' : 'Add-on Required'),
       ),
       body: _buildBody(),
     );
@@ -200,6 +252,13 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_eventsAddonEnabled) {
+      return _LockedAddOnState(
+        clubName: widget.club.clubName,
+        onRefresh: _loadData,
+      );
     }
 
     if (_errorMessage != null && _events.isEmpty) {
@@ -397,6 +456,70 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
               },
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _LockedAddOnState extends StatelessWidget {
+  const _LockedAddOnState({
+    required this.clubName,
+    required this.onRefresh,
+  });
+
+  final String clubName;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 34,
+                    backgroundColor: scheme.primaryContainer,
+                    foregroundColor: scheme.onPrimaryContainer,
+                    child: const Icon(Icons.lock_outline, size: 34),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Events & Meetings Add-on Required',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '$clubName does not currently have the Events & Meetings Add-on enabled.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'This add-on enables meetings, agendas, event notices, deadlines, and RSVP tools.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Add-on Status'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -62,7 +62,7 @@ class _MembershipApplicationsScreenState
             .select(
               'id,club_id,user_id,membership_type_id,application_type,status,'
               'first_name,last_name,showing_name,email,phone,address_line1,'
-              'address_line2,city,state,postal_code,country,date_of_birth,'
+              'address_line2,city,state,postal_code,country,date_of_birth,arba_number,'
               'submitted_at,payment_status,staff_notes,applicant_message,'
               'reviewed_at,reviewed_by,created_at',
             )
@@ -217,6 +217,8 @@ class _MembershipApplicationsScreenState
             'Review new membership applications and renewal requests.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
+          const SizedBox(height: 12),
+          const _BaseApplicationsAccessCard(),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -436,6 +438,11 @@ class _ApplicationCard extends StatelessWidget {
                   icon: Icons.phone_outlined,
                   text: application.phone!,
                 ),
+              if (application.arbaNumber != null)
+                _DetailRow(
+                  icon: Icons.confirmation_number_outlined,
+                  text: 'ARBA # ${application.arbaNumber!}',
+                ),
               _DetailRow(
                 icon: Icons.event_outlined,
                 text: 'Submitted ${_formatDate(application.submittedAt)}',
@@ -636,6 +643,10 @@ class _ApplicationReviewDialogState
                     value: application.phone ?? '—',
                   ),
                   _ReadOnlyField(
+                    label: 'ARBA number',
+                    value: application.arbaNumber ?? '—',
+                  ),
+                  _ReadOnlyField(
                     label: 'Application type',
                     value: _titleCase(application.applicationType),
                   ),
@@ -809,6 +820,7 @@ class _MembershipApplication {
     this.postalCode,
     this.country,
     this.dateOfBirth,
+    this.arbaNumber,
     this.staffNotes,
     this.applicantMessage,
     this.reviewedAt,
@@ -833,6 +845,7 @@ class _MembershipApplication {
   final String? postalCode;
   final String? country;
   final DateTime? dateOfBirth;
+  final String? arbaNumber;
   final DateTime submittedAt;
   final String paymentStatus;
   final String? staffNotes;
@@ -887,6 +900,7 @@ class _MembershipApplication {
       postalCode: _nullableString(json['postal_code']),
       country: _nullableString(json['country']),
       dateOfBirth: _nullableDate(json['date_of_birth']),
+      arbaNumber: _nullableString(json['arba_number']),
       submittedAt:
           _nullableDate(json['submitted_at']) ?? DateTime.now(),
       paymentStatus: _nullableString(json['payment_status']) ?? 'unpaid',
@@ -949,6 +963,49 @@ class _SummaryCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BaseApplicationsAccessCard extends StatelessWidget {
+  const _BaseApplicationsAccessCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: scheme.primaryContainer,
+              foregroundColor: scheme.onPrimaryContainer,
+              child: const Icon(Icons.check_circle_outline),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Included with Base Club Tools',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Applications and renewals are always available for clubs. Clubs can review applicants, request more information, approve, deny, or mark applications withdrawn. Payment integration and dues tracking are handled by the Membership Management Add-on.',
                   ),
                 ],
               ),

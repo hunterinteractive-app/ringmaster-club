@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../models/clubs/club_summary.dart';
 import '../../services/clubs/club_session.dart';
+import 'member/club_membership_apply_screen.dart';
+import 'member/club_sanction_request_apply_screen.dart';
 
 typedef ClubPageBuilder =
     Widget Function(BuildContext context, ClubSummary club);
@@ -132,6 +134,22 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
     );
   }
 
+  void _openMembershipApplication(ClubSummary club) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ClubMembershipApplyScreen(club: club),
+      ),
+    );
+  }
+
+  void _openSanctionRequest(ClubSummary club) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ClubSanctionRequestApplyScreen(club: club),
+      ),
+    );
+  }
+
   void _openAdminPortal(ClubSummary club) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -226,17 +244,34 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
             icon: Icons.badge_outlined,
             title: 'Member Portal',
             description:
-                'View memberships, digital cards, sweepstakes, events, and club documents.',
+                'View your membership details, digital cards, club documents, announcements, and any member tools enabled by this club.',
             buttonLabel: 'Open Member Portal',
             onPressed: () => _openMemberPortal(club),
           ),
+          const SizedBox(height: 12),
+          _PortalChoiceCard(
+            icon: Icons.assignment_ind_outlined,
+            title: 'Join / Renew Membership',
+            description:
+                'Choose a membership type, submit your information, and pay online when this club accepts online payments.',
+            buttonLabel: 'Start Application',
+            onPressed: () => _openMembershipApplication(club),
+          ),
+          const SizedBox(height: 12),
+          _PortalChoiceCard(
+            icon: Icons.verified_outlined,
+            title: 'Request Sanction',
+            description:
+                'Submit a show sanction request for review by this club. Pay online when this club accepts sanction payments.',
+            buttonLabel: 'Start Sanction Request',
+            onPressed: () => _openSanctionRequest(club),
+          ),
           if (club.canManageClub) ...[
-            const SizedBox(height: 12),
             _PortalChoiceCard(
               icon: Icons.admin_panel_settings_outlined,
               title: 'Manage Club',
               description:
-                  'Manage members, dues, sanctions, sweepstakes, documents, events, and communications.',
+                  'Manage club settings, members, documents, communications, reports, staff access, and any enabled add-on tools.',
               buttonLabel: 'Open Club Management',
               onPressed: () => _openAdminPortal(club),
             ),
@@ -348,6 +383,7 @@ class _ClubHeaderCard extends StatelessWidget {
     );
   }
 }
+
 
 class _ClubAvatar extends StatelessWidget {
   const _ClubAvatar({required this.club, this.radius = 24});

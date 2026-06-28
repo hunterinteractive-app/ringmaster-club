@@ -29,6 +29,49 @@ class _ClubStaffPermissionsScreenState
   String? _errorMessage;
   _StaffPermissionsDashboard? _dashboard;
 
+  String? get _currentUserId => _supabase.auth.currentUser?.id;
+
+  _ClubStaffAssignment? get _currentUserStaffAssignment {
+    final userId = _currentUserId;
+    final dashboard = _dashboard;
+    if (userId == null || dashboard == null) return null;
+
+    return dashboard.staff
+        .where((staff) => staff.userId == userId && staff.status == 'active')
+        .firstOrNull;
+  }
+
+  _ClubRole? get _currentUserRole {
+    final assignment = _currentUserStaffAssignment;
+    final dashboard = _dashboard;
+    if (assignment == null || dashboard == null) return null;
+    return dashboard.roleById(assignment.roleId);
+  }
+
+  bool get _canManageStaff {
+    final role = _currentUserRole;
+    if (role == null) return false;
+    return _isOwnerRole(role.code) || _isAdminRole(role.code);
+  }
+
+  bool get _isCurrentUserOwner {
+    final role = _currentUserRole;
+    if (role == null) return false;
+    return _isOwnerRole(role.code);
+  }
+
+  bool _canModifyStaffAssignment(_ClubStaffAssignment staff) {
+    if (!_canManageStaff) return false;
+    if (staff.userId != null && staff.userId == _currentUserId) return false;
+
+    final role = _dashboard?.roleById(staff.roleId);
+    if (role != null && _isOwnerRole(role.code) && !_isCurrentUserOwner) {
+      return false;
+    }
+
+    return true;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -98,12 +141,37 @@ class _ClubStaffPermissionsScreenState
     final dashboard = _dashboard;
     if (dashboard == null) return;
 
+    if (!_canManageStaff) {
+      _showPermissionSnackBar();
+      return;
+    }
+
+    if (existing != null && !_canModifyStaffAssignment(existing)) {
+      _showPermissionSnackBar(
+        'You do not have permission to change this staff assignment.',
+      );
+      return;
+    }
+
+    final editableRoles = _isCurrentUserOwner
+        ? dashboard.roles
+        : dashboard.roles
+            .where((role) => !_isOwnerRole(role.code))
+            .toList();
+
+    if (editableRoles.isEmpty) {
+      _showPermissionSnackBar(
+        'There are no roles you are allowed to assign.',
+      );
+      return;
+    }
+
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _StaffEditorDialog(
         clubId: widget.club.clubId,
-        roles: dashboard.roles,
+        roles: editableRoles,
         existing: existing,
       ),
     );
@@ -111,7 +179,23 @@ class _ClubStaffPermissionsScreenState
     if (changed == true) await _loadDashboard();
   }
 
+  void _showPermissionSnackBar([
+    String message = 'You do not have permission to manage staff assignments.',
+  ]) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _removeStaff(_ClubStaffAssignment staff) async {
+    if (!_canModifyStaffAssignment(staff)) {
+      _showPermissionSnackBar(
+        'You do not have permission to remove this staff assignment.',
+      );
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -153,6 +237,13 @@ class _ClubStaffPermissionsScreenState
   }
 
   Future<void> _toggleStatus(_ClubStaffAssignment staff) async {
+    if (!_canModifyStaffAssignment(staff)) {
+      _showPermissionSnackBar(
+        'You do not have permission to update this staff assignment.',
+      );
+      return;
+    }
+
     final nextStatus = staff.status == 'active' ? 'inactive' : 'active';
 
     try {
@@ -187,7 +278,11 @@ class _ClubStaffPermissionsScreenState
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _dashboard == null ? null : () => _openStaffEditor(),
+        onPressed: _dashboard == null
+            ? null
+            : _canManageStaff
+                ? () => _openStaffEditor()
+                : _showPermissionSnackBar,
         icon: const Icon(Icons.person_add_alt_1_outlined),
         label: const Text('Add Staff'),
       ),
@@ -239,6 +334,12 @@ class _ClubStaffPermissionsScreenState
           Text(
             'Manage staff access, role assignments, and permission visibility for this club.',
             style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          _CurrentAccessCard(
+            roleName: _currentUserRole?.name ?? 'No active staff role',
+            canManageStaff: _canManageStaff,
+            canManageBilling: _isCurrentUserOwner,
           ),
           const SizedBox(height: 16),
           if (_errorMessage != null) ...[
@@ -306,13 +407,16 @@ class _ClubStaffPermissionsScreenState
               message: dashboard.staff.isEmpty
                   ? 'Add officers, secretaries, treasurers, or other club staff to manage club operations.'
                   : 'Try another name, email, role, or status.',
-              actionLabel: dashboard.staff.isEmpty ? 'Add Staff' : null,
-              onAction:
-                  dashboard.staff.isEmpty ? () => _openStaffEditor() : null,
+              actionLabel:
+                  dashboard.staff.isEmpty && _canManageStaff ? 'Add Staff' : null,
+              onAction: dashboard.staff.isEmpty && _canManageStaff
+                  ? () => _openStaffEditor()
+                  : null,
             )
           else
             _StaffTable(
               staff: filteredStaff,
+              canModify: _canModifyStaffAssignment,
               onEdit: (staff) => _openStaffEditor(existing: staff),
               onToggleStatus: _toggleStatus,
               onRemove: _removeStaff,
@@ -340,12 +444,14 @@ class _ClubStaffPermissionsScreenState
 class _StaffTable extends StatelessWidget {
   const _StaffTable({
     required this.staff,
+    required this.canModify,
     required this.onEdit,
     required this.onToggleStatus,
     required this.onRemove,
   });
 
   final List<_ClubStaffAssignment> staff;
+  final bool Function(_ClubStaffAssignment staff) canModify;
   final ValueChanged<_ClubStaffAssignment> onEdit;
   final ValueChanged<_ClubStaffAssignment> onToggleStatus;
   final ValueChanged<_ClubStaffAssignment> onRemove;
@@ -371,35 +477,44 @@ class _StaffTable extends StatelessWidget {
                 cells: [
                   DataCell(Text(item.displayName)),
                   DataCell(Text(item.email ?? '—')),
-                  DataCell(Text(item.roleName ?? '—')),
+                  DataCell(
+                    Text(
+                      item.roleName ?? '—',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
                   DataCell(_StatusChip(status: item.status)),
                   DataCell(Text(_formatDate(item.createdAt))),
                   DataCell(
-                    PopupMenuButton<String>(
-                      onSelected: (value) {
-                        if (value == 'edit') onEdit(item);
-                        if (value == 'status') onToggleStatus(item);
-                        if (value == 'remove') onRemove(item);
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('Edit Role'),
-                        ),
-                        PopupMenuItem(
-                          value: 'status',
-                          child: Text(
-                            item.status == 'active'
-                                ? 'Deactivate'
-                                : 'Reactivate',
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'remove',
-                          child: Text('Remove Access'),
-                        ),
-                      ],
-                    ),
+                    canModify(item)
+                        ? PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'edit') onEdit(item);
+                              if (value == 'status') onToggleStatus(item);
+                              if (value == 'remove') onRemove(item);
+                            },
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit Role'),
+                              ),
+                              PopupMenuItem(
+                                value: 'status',
+                                child: Text(
+                                  item.status == 'active'
+                                      ? 'Deactivate'
+                                      : 'Reactivate',
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'remove',
+                                child: Text('Remove Access'),
+                              ),
+                            ],
+                          )
+                        : const Text('View only'),
                   ),
                 ],
               ),
@@ -440,8 +555,12 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
     super.initState();
     final existing = widget.existing;
     _emailController = TextEditingController(text: existing?.email ?? '');
-    _roleId = existing?.roleId ??
-        (widget.roles.isEmpty ? null : widget.roles.first.id);
+    final existingRoleIsAvailable = existing == null
+        ? false
+        : widget.roles.any((role) => role.id == existing.roleId);
+    _roleId = existingRoleIsAvailable
+        ? existing.roleId
+        : (widget.roles.isEmpty ? null : widget.roles.first.id);
     _status = existing?.status ?? 'active';
   }
 
@@ -612,7 +731,7 @@ class _RolePermissionsCard extends StatelessWidget {
         title: Text(role.name),
         subtitle: Text(
           role.description ??
-              '${permissions.length} ${permissions.length == 1 ? 'permission' : 'permissions'}',
+              '${role.normalizedCode} • ${permissions.length} ${permissions.length == 1 ? 'permission' : 'permissions'}',
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
@@ -637,6 +756,69 @@ class _RolePermissionsCard extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _CurrentAccessCard extends StatelessWidget {
+  const _CurrentAccessCard({
+    required this.roleName,
+    required this.canManageStaff,
+    required this.canManageBilling,
+  });
+
+  final String roleName;
+  final bool canManageStaff;
+  final bool canManageBilling;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: canManageStaff
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHighest,
+              foregroundColor: canManageStaff
+                  ? scheme.onPrimaryContainer
+                  : scheme.onSurfaceVariant,
+              child: Icon(
+                canManageStaff
+                    ? Icons.admin_panel_settings_outlined
+                    : Icons.visibility_outlined,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your access: $roleName',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    canManageStaff
+                        ? canManageBilling
+                            ? 'You can manage staff, permissions, billing, and add-ons for this club.'
+                            : 'You can manage staff and permissions for this club. Billing and add-ons remain owner-only.'
+                        : 'You can view staff and permissions, but you cannot change assignments.',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -870,6 +1052,13 @@ class _StaffPermissionsDashboard {
       ..sort((a, b) => a.label.compareTo(b.label));
   }
 
+  _ClubRole? roleById(String roleId) {
+    for (final role in roles) {
+      if (role.id == roleId) return role;
+    }
+    return null;
+  }
+
   factory _StaffPermissionsDashboard.fromJson(Map<String, dynamic> json) {
     return _StaffPermissionsDashboard(
       staff: _list(json['staff']).map(_ClubStaffAssignment.fromJson).toList(),
@@ -935,6 +1124,8 @@ class _ClubRole {
   final String code;
   final String? description;
   final bool isSystem;
+
+  String get normalizedCode => _normalizeRoleCode(code);
 
   factory _ClubRole.fromJson(Map<String, dynamic> json) {
     return _ClubRole(
@@ -1028,4 +1219,22 @@ String _titleCase(String value) {
         (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
       )
       .join(' ');
+}
+
+String _normalizeRoleCode(String value) {
+  return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+}
+
+bool _isOwnerRole(String value) {
+  final code = _normalizeRoleCode(value);
+  return code == 'owner' || code == 'club_owner';
+}
+
+bool _isAdminRole(String value) {
+  final code = _normalizeRoleCode(value);
+  return code == 'admin' || code == 'club_admin';
+}
+
+extension _FirstOrNullExtension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

@@ -27,6 +27,7 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   String _statusFilter = 'all';
+  bool _emailAddonEnabled = false;
   List<_CommunicationRecord> _communications = const [];
   List<_CommunicationTemplate> _templates = const [];
 
@@ -59,9 +60,9 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
         _supabase
             .from('club_communications')
             .select(
-              'id,club_id,subject,message,recipient_group,status,'
-              'scheduled_at,sent_at,recipient_count,failed_count,'
-              'created_at,updated_at',
+              'id,club_id,subject,message,recipient_group,channel,status,'
+              'email_status,scheduled_at,published_at,sent_at,last_error,'
+              'recipient_count,failed_count,created_at,updated_at',
             )
             .eq('club_id', widget.club.clubId)
             .order('created_at', ascending: false),
@@ -72,14 +73,22 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
             )
             .eq('club_id', widget.club.clubId)
             .order('name', ascending: true),
+        _supabase
+            .from('clubs')
+            .select('email_addon_enabled')
+            .eq('id', widget.club.clubId)
+            .single(),
       ]);
 
       final communicationRows = responses[0] as List;
       final templateRows = responses[1] as List;
+      final clubRow = Map<String, dynamic>.from(responses[2] as Map);
+      final emailAddonEnabled = clubRow['email_addon_enabled'] == true;
 
       if (!mounted) return;
 
       setState(() {
+        _emailAddonEnabled = emailAddonEnabled;
         _communications = communicationRows
             .whereType<Map>()
             .map(
@@ -112,8 +121,9 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
     final query = _searchController.text.trim().toLowerCase();
 
     return _communications.where((record) {
-      final matchesStatus =
-          _statusFilter == 'all' || record.status == _statusFilter;
+      final matchesStatus = _statusFilter == 'all' ||
+          record.status == _statusFilter ||
+          record.emailStatus == _statusFilter;
       if (!matchesStatus) return false;
       if (query.isEmpty) return true;
 
@@ -121,6 +131,8 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
         record.subject,
         record.message,
         record.recipientGroup,
+        record.channel,
+        record.emailStatus,
       ].join(' ').toLowerCase();
 
       return searchable.contains(query);
@@ -139,6 +151,7 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
       builder: (_) => _CommunicationComposerDialog(
         clubId: widget.club.clubId,
         templates: _templates,
+        emailAddonEnabled: _emailAddonEnabled,
         existing: existing,
       ),
     );
@@ -221,7 +234,7 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Create announcements, targeted emails, scheduled messages, and reusable templates.',
+            'Create member notices, communication records, and reusable templates. Email delivery is available as an add-on.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -246,23 +259,28 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
                   SizedBox(
                     width: width,
                     child: _SummaryCard(
-                      icon: Icons.schedule_send_outlined,
-                      label: 'Scheduled',
-                      value: _countForStatus('scheduled').toString(),
+                      icon: Icons.campaign_outlined,
+                      label: 'Published',
+                      value: _countForStatus('published').toString(),
                     ),
                   ),
                   SizedBox(
                     width: width,
                     child: _SummaryCard(
-                      icon: Icons.mark_email_read_outlined,
-                      label: 'Sent',
-                      value: _countForStatus('sent').toString(),
+                      icon: Icons.outbox_outlined,
+                      label: 'Queued Email',
+                      value: _communications
+                          .where((record) => record.emailStatus == 'queued')
+                          .length
+                          .toString(),
                     ),
                   ),
                 ],
               );
             },
           ),
+          const SizedBox(height: 12),
+          _EmailAddonNotice(enabled: _emailAddonEnabled),
           const SizedBox(height: 16),
           TextField(
             controller: _searchController,
@@ -287,8 +305,8 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
               segments: const [
                 ButtonSegment(value: 'all', label: Text('All')),
                 ButtonSegment(value: 'draft', label: Text('Drafts')),
-                ButtonSegment(value: 'scheduled', label: Text('Scheduled')),
-                ButtonSegment(value: 'sent', label: Text('Sent')),
+                ButtonSegment(value: 'published', label: Text('Published')),
+                ButtonSegment(value: 'queued', label: Text('Queued')),
                 ButtonSegment(value: 'failed', label: Text('Failed')),
               ],
               selected: {_statusFilter},
@@ -320,7 +338,7 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
             _InlineEmptyState(
               title: 'No communications yet',
               message:
-                  'Create an announcement, email campaign, or reusable message template.',
+                  'Create an in-app member notice or communication record. Email delivery can be added later with the Email Add-on.',
               actionLabel: 'Create Message',
               onAction: () => _openComposer(),
             )
@@ -387,9 +405,9 @@ class _CommunicationCard extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     child: Icon(
-                      record.status == 'sent'
+                      record.usesEmail
                           ? Icons.mark_email_read_outlined
-                          : Icons.mail_outline,
+                          : Icons.campaign_outlined,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -404,7 +422,9 @@ class _CommunicationCard extends StatelessWidget {
                                     fontWeight: FontWeight.w700,
                                   ),
                         ),
-                        Text(_titleCase(record.recipientGroup)),
+                        Text(
+                          '${_titleCase(record.recipientGroup)} • ${record.channelLabel}',
+                        ),
                       ],
                     ),
                   ),
@@ -425,6 +445,20 @@ class _CommunicationCard extends StatelessWidget {
                     backgroundColor: statusColor.withAlpha(40),
                     side: BorderSide(color: statusColor),
                   ),
+                  Chip(
+                    avatar: Icon(
+                      record.usesEmail
+                          ? Icons.email_outlined
+                          : Icons.campaign_outlined,
+                      size: 18,
+                    ),
+                    label: Text(record.channelLabel),
+                  ),
+                  if (record.usesEmail)
+                    Chip(
+                      avatar: const Icon(Icons.outbox_outlined, size: 18),
+                      label: Text('Email ${_titleCase(record.emailStatus)}'),
+                    ),
                   if (record.recipientCount != null)
                     Chip(
                       avatar: const Icon(Icons.people_outline, size: 18),
@@ -449,12 +483,24 @@ class _CommunicationCard extends StatelessWidget {
                   icon: Icons.schedule_outlined,
                   text: 'Scheduled ${_formatDateTime(record.scheduledAt!)}',
                 ),
+              if (record.publishedAt != null)
+                _DetailRow(
+                  icon: Icons.campaign_outlined,
+                  text: 'Published ${_formatDateTime(record.publishedAt!)}',
+                ),
               if (record.sentAt != null)
                 _DetailRow(
                   icon: Icons.send_outlined,
                   text: 'Sent ${_formatDateTime(record.sentAt!)}',
                 ),
-              if (record.scheduledAt == null && record.sentAt == null)
+              if (record.lastError != null)
+                _DetailRow(
+                  icon: Icons.error_outline,
+                  text: 'Last error: ${record.lastError}',
+                ),
+              if (record.scheduledAt == null &&
+                  record.publishedAt == null &&
+                  record.sentAt == null)
                 _DetailRow(
                   icon: Icons.edit_calendar_outlined,
                   text: 'Created ${_formatDateTime(record.createdAt)}',
@@ -468,8 +514,10 @@ class _CommunicationCard extends StatelessWidget {
 
   static Color _statusColor(String status, ColorScheme scheme) {
     switch (status) {
+      case 'published':
       case 'sent':
         return scheme.primary;
+      case 'queued':
       case 'scheduled':
         return scheme.tertiary;
       case 'failed':
@@ -484,11 +532,13 @@ class _CommunicationComposerDialog extends StatefulWidget {
   const _CommunicationComposerDialog({
     required this.clubId,
     required this.templates,
+    required this.emailAddonEnabled,
     this.existing,
   });
 
   final String clubId;
   final List<_CommunicationTemplate> templates;
+  final bool emailAddonEnabled;
   final _CommunicationRecord? existing;
 
   @override
@@ -506,9 +556,16 @@ class _CommunicationComposerDialogState
   late final TextEditingController _scheduledAtController;
 
   late String _recipientGroup;
+  late String _channel;
   String? _templateId;
   bool _isSaving = false;
   String? _errorMessage;
+
+  bool get _editingEmailCommunicationWithoutAddon {
+    final existing = widget.existing;
+    if (existing == null || widget.emailAddonEnabled) return false;
+    return existing.usesEmail;
+  }
 
   @override
   void initState() {
@@ -524,6 +581,12 @@ class _CommunicationComposerDialogState
     );
 
     _recipientGroup = existing?.recipientGroup ?? 'active_members';
+    _channel = existing?.channel ?? 'in_app';
+    if (!widget.emailAddonEnabled &&
+        _channel != 'in_app' &&
+        existing == null) {
+      _channel = 'in_app';
+    }
   }
 
   @override
@@ -548,16 +611,34 @@ class _CommunicationComposerDialogState
     _messageController.text = template.message;
   }
 
-  Future<void> _save({required bool sendNow}) async {
+  Future<void> _save({required bool publishNow}) async {
     if (_isSaving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     final scheduledAt = _parseDateTime(_scheduledAtController.text);
-    final nextStatus = sendNow
-        ? 'sent'
+    final usesEmail = _channel == 'email' || _channel == 'both';
+
+    if (usesEmail && !widget.emailAddonEnabled) {
+      setState(() {
+        _errorMessage = _editingEmailCommunicationWithoutAddon
+            ? 'This message used email delivery, but the Email Add-on is no longer enabled. Change the delivery method to In-app before saving.'
+            : 'Email delivery requires the Email Add-on.';
+      });
+      return;
+    }
+
+    final nextStatus = publishNow
+        ? usesEmail
+            ? 'queued'
+            : 'published'
         : scheduledAt != null
             ? 'scheduled'
             : 'draft';
+    final emailStatus = usesEmail
+        ? publishNow
+            ? 'queued'
+            : 'not_applicable'
+        : 'not_applicable';
 
     setState(() {
       _isSaving = true;
@@ -569,22 +650,48 @@ class _CommunicationComposerDialogState
       'subject': _subjectController.text.trim(),
       'message': _messageController.text.trim(),
       'recipient_group': _recipientGroup,
+      'channel': _channel,
       'status': nextStatus,
+      'email_status': emailStatus,
       'scheduled_at': scheduledAt?.toIso8601String(),
-      'sent_at': sendNow ? DateTime.now().toIso8601String() : null,
+      'published_at': publishNow ? DateTime.now().toIso8601String() : null,
+      'sent_at': null,
     };
 
     try {
       final existing = widget.existing;
+      late final String communicationId;
 
       if (existing == null) {
-        await _supabase.from('club_communications').insert(payload);
+        final inserted = await _supabase
+            .from('club_communications')
+            .insert(payload)
+            .select('id')
+            .single();
+
+        communicationId = inserted['id'].toString();
       } else {
         await _supabase
             .from('club_communications')
             .update(payload)
             .eq('id', existing.id)
             .eq('club_id', widget.clubId);
+
+        communicationId = existing.id;
+      }
+
+      if (publishNow && usesEmail) {
+        final deliveryError = await _sendQueuedEmailNow(communicationId);
+
+        if (!mounted) return;
+
+        if (deliveryError != null) {
+          await _showDeliveryError(deliveryError);
+
+          if (!mounted) return;
+          Navigator.of(context).pop(true);
+          return;
+        }
       }
 
       if (!mounted) return;
@@ -597,6 +704,64 @@ class _CommunicationComposerDialogState
         _errorMessage = 'Unable to save communication: $error';
       });
     }
+  }
+
+  Future<String?> _sendQueuedEmailNow(String communicationId) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'send-club-communications',
+        body: {
+          'communication_id': communicationId,
+          'limit': 1,
+        },
+      );
+
+      final data = response.data;
+      if (data is Map) {
+        final topLevelError = data['error']?.toString().trim();
+        if (topLevelError != null && topLevelError.isNotEmpty) {
+          return topLevelError;
+        }
+
+        final results = data['results'];
+        if (results is List && results.isNotEmpty) {
+          final first = results.first;
+          if (first is Map) {
+            final status = first['status']?.toString();
+            final error = first['error']?.toString().trim();
+            final failedCount = int.tryParse(
+                  first['failed_count']?.toString() ?? '0',
+                ) ??
+                0;
+
+            if (status == 'failed' || failedCount > 0) {
+              if (error != null && error.isNotEmpty) return error;
+              return 'Email delivery failed for $failedCount recipient(s).';
+            }
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      return error.toString();
+    }
+  }
+
+  Future<void> _showDeliveryError(String error) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Email Delivery Failed'),
+        content: Text(error),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickScheduledDateTime() async {
@@ -656,6 +821,19 @@ class _CommunicationComposerDialogState
                   ),
                   const SizedBox(height: 14),
                 ],
+                if (_editingEmailCommunicationWithoutAddon) ...[
+                  Material(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                    child: const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                        'This communication was created with email delivery, but the Email Add-on is no longer enabled. You can view it here, but you must change the delivery method to In-app before saving changes.',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 DropdownButtonFormField<String>(
                   initialValue: _templateId,
                   decoration: const InputDecoration(
@@ -675,6 +853,53 @@ class _CommunicationComposerDialogState
                       ),
                   ],
                   onChanged: _isSaving ? null : _applyTemplate,
+                ),
+                const SizedBox(height: 14),
+                _SectionTitle('Delivery Method'),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(
+                      value: 'in_app',
+                      icon: Icon(Icons.campaign_outlined),
+                      label: Text('In-app'),
+                    ),
+                    ButtonSegment(
+                      value: 'email',
+                      icon: Icon(Icons.email_outlined),
+                      label: Text('Email'),
+                    ),
+                    ButtonSegment(
+                      value: 'both',
+                      icon: Icon(Icons.all_inbox_outlined),
+                      label: Text('Both'),
+                    ),
+                  ],
+                  selected: {_channel},
+                  onSelectionChanged: _isSaving
+                      ? null
+                      : (values) {
+                          final selected = values.first;
+                          if (selected != 'in_app' &&
+                              !widget.emailAddonEnabled) {
+                            setState(() {
+                              _errorMessage =
+                                  'Email delivery requires the Email Add-on.';
+                              _channel = 'in_app';
+                            });
+                            return;
+                          }
+                          setState(() {
+                            _errorMessage = null;
+                            _channel = selected;
+                          });
+                        },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  widget.emailAddonEnabled
+                      ? 'Email selections will be queued and sent through the email delivery function.'
+                      : 'In-app notices are included. Email delivery is available with the Email Add-on.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
@@ -794,24 +1019,53 @@ class _CommunicationComposerDialogState
           child: const Text('Cancel'),
         ),
         OutlinedButton.icon(
-          onPressed: _isSaving ? null : () => _save(sendNow: false),
+          onPressed: _isSaving ? null : () => _save(publishNow: false),
           icon: const Icon(Icons.save_outlined),
           label: Text(
             _scheduledAtController.text.isEmpty ? 'Save Draft' : 'Schedule',
           ),
         ),
         FilledButton.icon(
-          onPressed: _isSaving ? null : () => _save(sendNow: true),
+          onPressed: _isSaving ? null : () => _save(publishNow: true),
           icon: _isSaving
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.send_outlined),
-          label: Text(_isSaving ? 'Saving...' : 'Send Now'),
+              : Icon(
+                  _channel == 'in_app'
+                      ? Icons.campaign_outlined
+                      : Icons.outbox_outlined,
+                ),
+          label: Text(
+            _isSaving
+                ? 'Saving...'
+                : _channel == 'in_app'
+                    ? 'Publish Notice'
+                    : 'Queue Email',
+          ),
         ),
       ],
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+      ),
     );
   }
 }
@@ -1112,10 +1366,14 @@ class _CommunicationRecord {
     required this.subject,
     required this.message,
     required this.recipientGroup,
+    required this.channel,
     required this.status,
+    required this.emailStatus,
     required this.createdAt,
     required this.failedCount,
+    this.lastError,
     this.scheduledAt,
+    this.publishedAt,
     this.sentAt,
     this.recipientCount,
   });
@@ -1124,14 +1382,32 @@ class _CommunicationRecord {
   final String subject;
   final String message;
   final String recipientGroup;
+  final String channel;
   final String status;
+  final String emailStatus;
   final DateTime? scheduledAt;
+  final DateTime? publishedAt;
   final DateTime? sentAt;
   final int? recipientCount;
   final int failedCount;
+  final String? lastError;
   final DateTime createdAt;
 
   String get messagePreview => message.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  bool get usesEmail => channel == 'email' || channel == 'both';
+
+  String get channelLabel {
+    switch (channel) {
+      case 'email':
+        return 'Email';
+      case 'both':
+        return 'In-app + Email';
+      case 'in_app':
+      default:
+        return 'In-app Notice';
+    }
+  }
 
   factory _CommunicationRecord.fromJson(Map<String, dynamic> json) {
     return _CommunicationRecord(
@@ -1140,11 +1416,15 @@ class _CommunicationRecord {
       message: _nullableString(json['message']) ?? '',
       recipientGroup:
           _nullableString(json['recipient_group']) ?? 'active_members',
+      channel: _nullableString(json['channel']) ?? 'in_app',
       status: _nullableString(json['status']) ?? 'draft',
+      emailStatus: _nullableString(json['email_status']) ?? 'not_applicable',
       scheduledAt: _nullableDate(json['scheduled_at']),
+      publishedAt: _nullableDate(json['published_at']),
       sentAt: _nullableDate(json['sent_at']),
       recipientCount: _nullableInt(json['recipient_count']),
       failedCount: _nullableInt(json['failed_count']) ?? 0,
+      lastError: _nullableString(json['last_error']),
       createdAt: _nullableDate(json['created_at']) ?? DateTime.now(),
     );
   }
@@ -1395,4 +1675,42 @@ String _titleCase(String value) {
 
 extension _FirstOrNullExtension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+class _EmailAddonNotice extends StatelessWidget {
+  const _EmailAddonNotice({required this.enabled});
+
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: enabled
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHighest,
+              foregroundColor: enabled
+                  ? scheme.onPrimaryContainer
+                  : scheme.onSurfaceVariant,
+              child: Icon(enabled ? Icons.email_outlined : Icons.lock_outline),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                enabled
+                    ? 'Email Add-on enabled. Email messages can be queued and sent through the delivery function.'
+                    : 'Base communications create in-app notices and records. Email delivery is available as an add-on.',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

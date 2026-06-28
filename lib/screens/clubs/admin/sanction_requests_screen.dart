@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import 'sanction_types_screen.dart';
 
 class SanctionRequestsScreen extends StatefulWidget {
   const SanctionRequestsScreen({
@@ -24,8 +25,12 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
 
   bool _isLoading = true;
   String? _errorMessage;
+  bool _sanctionRequestsAddonEnabled = false;
+  bool _allowSanctionCheckPayments = false;
+  bool _isSavingPaymentSettings = false;
   String _statusFilter = 'pending';
   List<_SanctionRequest> _requests = const [];
+  List<_SanctionType> _sanctionTypes = const [];
 
   @override
   void initState() {
@@ -52,32 +57,85 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
     });
 
     try {
-      final rows = await _supabase
+      final clubRow = await _supabase
+          .from('clubs')
+          .select('sanction_requests_addon_enabled,allow_sanction_check_payments')
+          .eq('id', widget.club.clubId)
+          .single();
+
+      final sanctionRequestsAddonEnabled =
+          clubRow['sanction_requests_addon_enabled'] == true;
+      final allowSanctionCheckPayments =
+          clubRow['allow_sanction_check_payments'] == true;
+
+      if (!sanctionRequestsAddonEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _sanctionRequestsAddonEnabled = false;
+          _allowSanctionCheckPayments = allowSanctionCheckPayments;
+          _requests = const [];
+          _sanctionTypes = const [];
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final requestRows = await _supabase
           .from('club_sanction_requests')
           .select(
-            'id,club_id,requesting_club_name,contact_name,contact_email,'
-            'contact_phone,show_name,show_date,show_end_date,location_name,'
-            'location_address,show_type,sanction_category,status,fee_due,'
-            'amount_paid,currency,payment_status,sanction_number,'
-            'applicant_notes,staff_notes,submitted_at,reviewed_at,created_at',
+            'id,club_id,sanction_type_id,requesting_club_name,contact_name,'
+            'contact_email,contact_phone,show_name,show_date,show_end_date,'
+            'location_name,location_address,show_type,sanction_category,'
+            'status,fee_due,amount_paid,currency,payment_status,'
+            'sanction_number,applicant_notes,staff_notes,submitted_at,'
+            'reviewed_at,created_at',
           )
           .eq('club_id', widget.club.clubId)
           .order('show_date', ascending: true)
           .order('submitted_at', ascending: false);
 
-      final requests = (rows as List)
+      final sanctionTypeRows = await _supabase
+          .from('club_sanction_types')
+          .select(
+            'id,name,description,sanction_scope,base_price,currency,'
+            'is_bundle,included_open_count,included_youth_count,is_active,'
+            'sort_order',
+          )
+          .eq('club_id', widget.club.clubId)
+          .order('sort_order', ascending: true)
+          .order('name', ascending: true);
+
+      final sanctionTypes = (sanctionTypeRows as List)
+          .whereType<Map>()
+          .map((row) => _SanctionType.fromJson(Map<String, dynamic>.from(row)))
+          .toList();
+      final sanctionTypeMap = {
+        for (final type in sanctionTypes) type.id: type,
+      };
+
+      final requests = (requestRows as List)
           .whereType<Map>()
           .map(
-            (row) => _SanctionRequest.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) {
+              final json = Map<String, dynamic>.from(row);
+              final sanctionTypeId = json['sanction_type_id']?.toString();
+              return _SanctionRequest.fromJson(
+                json,
+                sanctionType: sanctionTypeId == null
+                    ? null
+                    : sanctionTypeMap[sanctionTypeId],
+              );
+            },
           )
           .toList();
 
       if (!mounted) return;
 
       setState(() {
+        _sanctionRequestsAddonEnabled = true;
+        _allowSanctionCheckPayments = allowSanctionCheckPayments;
         _requests = requests;
+        _sanctionTypes = sanctionTypes;
         _isLoading = false;
       });
     } catch (error) {
@@ -89,6 +147,65 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
       });
     }
   }
+
+  Future<void> _setAllowSanctionCheckPayments(bool value) async {
+    if (_isSavingPaymentSettings) return;
+
+    setState(() {
+      _isSavingPaymentSettings = true;
+      _allowSanctionCheckPayments = value;
+      _errorMessage = null;
+    });
+
+    try {
+      await _supabase
+          .from('clubs')
+          .update({'allow_sanction_check_payments': value})
+          .eq('id', widget.club.clubId);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value
+                ? 'Mailed check payments are enabled for sanction requests.'
+                : 'Mailed check payments are disabled for sanction requests.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _allowSanctionCheckPayments = !value;
+        _errorMessage = 'Unable to update sanction payment settings: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingPaymentSettings = false;
+        });
+      }
+    }
+  }
+
+  void _showLockedFeature() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sanction Requests Requires an Add-on'),
+        content: const Text(
+          'Online sanction request management, sanction purchasing, sanction types, and approval workflows are available with the Sanction Requests Add-on. The club owner can enable this when the club is ready to use it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
 
   List<_SanctionRequest> get _filteredRequests {
     final query = _searchController.text.trim().toLowerCase();
@@ -105,6 +222,7 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
         request.contactEmail,
         request.showName,
         request.locationName,
+        request.sanctionType?.name,
         request.sanctionCategory,
         request.sanctionNumber,
       ].whereType<String>().join(' ').toLowerCase();
@@ -118,18 +236,133 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
     return _requests.where((request) => request.status == status).length;
   }
 
+  List<_SanctionType> get _activeSanctionTypes {
+    return _sanctionTypes.where((type) => type.isActive).toList();
+  }
+
+  List<_SanctionType> _sanctionTypesForDialog(_SanctionRequest? existing) {
+    final activeTypes = _activeSanctionTypes;
+    final existingType = existing?.sanctionType;
+
+    if (existingType == null ||
+        activeTypes.any((type) => type.id == existingType.id)) {
+      return activeTypes;
+    }
+
+    return [existingType, ...activeTypes];
+  }
+
+  Future<void> _openSanctionTypes() async {
+    if (!_sanctionRequestsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SanctionTypesScreen(club: widget.club),
+      ),
+    );
+
+    if (mounted) {
+      await _loadRequests();
+    }
+  }
+
+  Future<void> _showNoActiveSanctionTypesDialog() async {
+    if (!_sanctionRequestsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('No Active Sanction Types'),
+        content: const Text(
+          'Create or restore at least one active sanction type before creating a sanction request.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _openSanctionTypes();
+            },
+            icon: const Icon(Icons.fact_check_outlined),
+            label: const Text('Manage Sanction Types'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openEditor({_SanctionRequest? existing}) async {
+    if (!_sanctionRequestsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _SanctionRequestDialog(
         clubId: widget.club.clubId,
+        sanctionTypes: _sanctionTypesForDialog(existing),
         existing: existing,
       ),
     );
 
     if (changed == true) {
       await _loadRequests();
+    }
+  }
+
+  Future<void> _openQuickReview(
+    _SanctionRequest request,
+    String status,
+  ) async {
+    if (!_sanctionRequestsAddonEnabled) {
+      _showLockedFeature();
+      return;
+    }
+    final result = await showDialog<_QuickReviewResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _QuickReviewDialog(
+        request: request,
+        status: status,
+      ),
+    );
+
+    if (result == null) return;
+
+    try {
+      await _supabase
+          .from('club_sanction_requests')
+          .update({
+            'status': status,
+            'sanction_number': result.sanctionNumber,
+            'staff_notes': result.staffNotes,
+            'reviewed_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', request.id)
+          .eq('club_id', widget.club.clubId);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${request.showName} was ${_titleCase(status).toLowerCase()}.',
+          ),
+        ),
+      );
+      await _loadRequests();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to update sanction request: $error')),
+      );
     }
   }
 
@@ -147,9 +380,19 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
-        icon: const Icon(Icons.add),
-        label: const Text('New Request'),
+        onPressed: _isLoading
+            ? null
+            : !_sanctionRequestsAddonEnabled
+                ? _showLockedFeature
+                : _activeSanctionTypes.isEmpty
+                    ? _showNoActiveSanctionTypesDialog
+                    : () => _openEditor(),
+        icon: Icon(
+          _sanctionRequestsAddonEnabled ? Icons.add : Icons.lock_outline,
+        ),
+        label: Text(
+          _sanctionRequestsAddonEnabled ? 'New Request' : 'Add-on Required',
+        ),
       ),
       body: _buildBody(),
     );
@@ -158,6 +401,13 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_sanctionRequestsAddonEnabled) {
+      return _LockedAddOnState(
+        clubName: widget.club.clubName,
+        onRefresh: _loadRequests,
+      );
     }
 
     if (_errorMessage != null && _requests.isEmpty) {
@@ -189,6 +439,16 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
             'Review and manage show sanction requests, fees, and approval numbers.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
+          const SizedBox(height: 16),
+          _SanctionPaymentSettingsCard(
+            allowCheckPayments: _allowSanctionCheckPayments,
+            isSaving: _isSavingPaymentSettings,
+            onAllowCheckPaymentsChanged: _setAllowSanctionCheckPayments,
+          ),
+          if (_activeSanctionTypes.isEmpty) ...[
+            const SizedBox(height: 16),
+            _NoActiveSanctionTypesCard(onManage: _openSanctionTypes),
+          ],
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -288,7 +548,9 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
               message:
                   'Create the first sanction request or wait for one to be submitted.',
               actionLabel: 'New Request',
-              onAction: () => _openEditor(),
+              onAction: _activeSanctionTypes.isEmpty
+                  ? _showNoActiveSanctionTypesDialog
+                  : () => _openEditor(),
             )
           else if (filtered.isEmpty)
             const _InlineEmptyState(
@@ -313,6 +575,12 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
                         child: _SanctionRequestCard(
                           request: request,
                           onEdit: () => _openEditor(existing: request),
+                          onApprove: () => _openQuickReview(
+                            request,
+                            'approved',
+                          ),
+                          onReturn: () => _openQuickReview(request, 'returned'),
+                          onDeny: () => _openQuickReview(request, 'denied'),
                         ),
                       ),
                   ],
@@ -329,15 +597,22 @@ class _SanctionRequestCard extends StatelessWidget {
   const _SanctionRequestCard({
     required this.request,
     required this.onEdit,
+    required this.onApprove,
+    required this.onReturn,
+    required this.onDeny,
   });
 
   final _SanctionRequest request;
   final VoidCallback onEdit;
+  final VoidCallback onApprove;
+  final VoidCallback onReturn;
+  final VoidCallback onDeny;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final statusColor = _statusColor(request.status, scheme);
+    final isPending = request.status == 'pending';
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -388,7 +663,12 @@ class _SanctionRequestCard extends StatelessWidget {
                     side: BorderSide(color: statusColor),
                   ),
                   Chip(label: Text(_titleCase(request.showType))),
-                  Chip(label: Text(_titleCase(request.sanctionCategory))),
+                  Chip(
+                    label: Text(
+                      request.sanctionType?.name ??
+                          _titleCase(request.sanctionCategory),
+                    ),
+                  ),
                   Chip(
                     avatar: const Icon(Icons.payments_outlined, size: 18),
                     label: Text(_titleCase(request.paymentStatus)),
@@ -419,11 +699,50 @@ class _SanctionRequestCard extends StatelessWidget {
                 text:
                     'Fee: ${_money(request.feeDue)} • Paid: ${_money(request.amountPaid)}',
               ),
+              if (request.sanctionType != null)
+                _DetailRow(
+                  icon: Icons.fact_check_outlined,
+                  text: 'Type: ${request.sanctionType!.name}',
+                ),
               if (request.sanctionNumber != null)
                 _DetailRow(
                   icon: Icons.confirmation_number_outlined,
                   text: 'Sanction #${request.sanctionNumber}',
                 ),
+              if (request.staffNotes != null)
+                _DetailRow(
+                  icon: Icons.notes_outlined,
+                  text: 'Staff notes: ${request.staffNotes}',
+                ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.rate_review_outlined),
+                    label: Text(isPending ? 'Review' : 'Edit'),
+                  ),
+                  if (isPending) ...[
+                    FilledButton.icon(
+                      onPressed: onApprove,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text('Approve'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onReturn,
+                      icon: const Icon(Icons.assignment_return_outlined),
+                      label: const Text('Return'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onDeny,
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Deny'),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),
@@ -447,13 +766,144 @@ class _SanctionRequestCard extends StatelessWidget {
   }
 }
 
+class _QuickReviewDialog extends StatefulWidget {
+  const _QuickReviewDialog({
+    required this.request,
+    required this.status,
+  });
+
+  final _SanctionRequest request;
+  final String status;
+
+  @override
+  State<_QuickReviewDialog> createState() => _QuickReviewDialogState();
+}
+
+class _QuickReviewDialogState extends State<_QuickReviewDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _sanctionNumberController;
+  late final TextEditingController _staffNotesController;
+
+  bool get _isApproval => widget.status == 'approved';
+
+  @override
+  void initState() {
+    super.initState();
+    _sanctionNumberController = TextEditingController(
+      text: widget.request.sanctionNumber ?? '',
+    );
+    _staffNotesController = TextEditingController(
+      text: widget.request.staffNotes ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _sanctionNumberController.dispose();
+    _staffNotesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('${_titleCase(widget.status)} Sanction Request'),
+      content: SizedBox(
+        width: 520,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                widget.request.showName,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(widget.request.requestingClubName),
+              const SizedBox(height: 16),
+              if (_isApproval) ...[
+                TextFormField(
+                  controller: _sanctionNumberController,
+                  decoration: const InputDecoration(
+                    labelText: 'Sanction number',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Sanction number is required to approve.';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 14),
+              ],
+              TextFormField(
+                controller: _staffNotesController,
+                minLines: 3,
+                maxLines: 6,
+                decoration: InputDecoration(
+                  labelText:
+                      _isApproval ? 'Staff notes' : 'Staff notes / reason',
+                  hintText: _isApproval
+                      ? 'Optional internal notes about this approval.'
+                      : 'Explain what the requesting club needs to know.',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            if (!(_formKey.currentState?.validate() ?? false)) return;
+            Navigator.of(context).pop(
+              _QuickReviewResult(
+                sanctionNumber: _isApproval
+                    ? _nullIfBlankValue(_sanctionNumberController.text)
+                    : widget.request.sanctionNumber,
+                staffNotes: _nullIfBlankValue(_staffNotesController.text),
+              ),
+            );
+          },
+          icon: Icon(
+            _isApproval ? Icons.check_circle_outline : Icons.save_outlined,
+          ),
+          label: Text(_titleCase(widget.status)),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickReviewResult {
+  const _QuickReviewResult({
+    required this.sanctionNumber,
+    required this.staffNotes,
+  });
+
+  final String? sanctionNumber;
+  final String? staffNotes;
+}
+
 class _SanctionRequestDialog extends StatefulWidget {
   const _SanctionRequestDialog({
     required this.clubId,
+    required this.sanctionTypes,
     this.existing,
   });
 
   final String clubId;
+  final List<_SanctionType> sanctionTypes;
   final _SanctionRequest? existing;
 
   @override
@@ -481,6 +931,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
   late final TextEditingController _applicantNotesController;
   late final TextEditingController _staffNotesController;
 
+  String? _sanctionTypeId;
   late String _showType;
   late String _sanctionCategory;
   late String _status;
@@ -527,10 +978,16 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     _staffNotesController =
         TextEditingController(text: existing?.staffNotes ?? '');
 
+    _sanctionTypeId = existing?.sanctionTypeId;
     _showType = existing?.showType ?? 'all_breed';
     _sanctionCategory = existing?.sanctionCategory ?? 'rabbit';
     _status = existing?.status ?? 'pending';
     _paymentStatus = existing?.paymentStatus ?? 'unpaid';
+
+    if (_sanctionTypeId == null && widget.sanctionTypes.isNotEmpty) {
+      _sanctionTypeId = widget.sanctionTypes.first.id;
+      _applySanctionType(widget.sanctionTypes.first, updateState: false);
+    }
   }
 
   @override
@@ -551,6 +1008,23 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     _applicantNotesController.dispose();
     _staffNotesController.dispose();
     super.dispose();
+  }
+
+  void _applySanctionType(
+    _SanctionType type, {
+    bool updateState = true,
+  }) {
+    void apply() {
+      _sanctionTypeId = type.id;
+      _feeDueController.text = type.basePrice.toStringAsFixed(2);
+      _currencyController.text = type.currency.toUpperCase();
+    }
+
+    if (updateState) {
+      setState(apply);
+    } else {
+      apply();
+    }
   }
 
   Future<void> _save() async {
@@ -577,13 +1051,23 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       return;
     }
 
+    if (_sanctionTypeId == null || _sanctionTypeId!.isEmpty) {
+      setState(() {
+        _errorMessage = 'Select a sanction type before saving.';
+      });
+      return;
+    }
+
     setState(() {
       _isSaving = true;
       _errorMessage = null;
     });
 
+    final existing = widget.existing;
+    final reviewedAt = _reviewedAtPayload(existing);
     final payload = <String, dynamic>{
       'club_id': widget.clubId,
+      'sanction_type_id': _sanctionTypeId,
       'requesting_club_name': _requestingClubController.text.trim(),
       'contact_name': _contactNameController.text.trim(),
       'contact_email': _nullIfBlank(_contactEmailController.text),
@@ -605,12 +1089,10 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       'sanction_number': _nullIfBlank(_sanctionNumberController.text),
       'applicant_notes': _nullIfBlank(_applicantNotesController.text),
       'staff_notes': _nullIfBlank(_staffNotesController.text),
-      'reviewed_at': _status == 'pending' ? null : DateTime.now().toIso8601String(),
+      'reviewed_at': reviewedAt,
     };
 
     try {
-      final existing = widget.existing;
-
       if (existing == null) {
         await _supabase.from('club_sanction_requests').insert(payload);
       } else {
@@ -631,6 +1113,19 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
         _errorMessage = 'Unable to save sanction request: $error';
       });
     }
+  }
+
+  String? _reviewedAtPayload(_SanctionRequest? existing) {
+    if (_status == 'pending') return null;
+
+    final existingReviewedAt = existing?.reviewedAt;
+    if (existing != null &&
+        existing.status == _status &&
+        existingReviewedAt != null) {
+      return existingReviewedAt.toIso8601String();
+    }
+
+    return DateTime.now().toIso8601String();
   }
 
   Future<void> _pickDate(TextEditingController controller) async {
@@ -714,6 +1209,36 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                 ),
                 const SizedBox(height: 18),
                 _SectionTitle('Show Details'),
+                DropdownButtonFormField<String>(
+                  initialValue: _sanctionTypeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Sanction type',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final type in widget.sanctionTypes)
+                      DropdownMenuItem(
+                        value: type.id,
+                        child: Text(
+                          type.isActive ? type.name : '${type.name} (Archived)',
+                        ),
+                      ),
+                  ],
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          final selected = widget.sanctionTypes
+                              .where((type) => type.id == value)
+                              .firstOrNull;
+                          if (selected == null) return;
+                          _applySanctionType(selected);
+                        },
+                  validator: (value) => value == null || value.isEmpty
+                      ? 'Select a sanction type.'
+                      : null,
+                ),
+                const SizedBox(height: 14),
                 TextFormField(
                   controller: _showNameController,
                   decoration: const InputDecoration(
@@ -1024,6 +1549,8 @@ class _SanctionRequest {
     required this.id,
     required this.requestingClubName,
     required this.contactName,
+    this.sanctionTypeId,
+    this.sanctionType,
     required this.showName,
     required this.showDate,
     required this.showType,
@@ -1046,6 +1573,8 @@ class _SanctionRequest {
   });
 
   final String id;
+  final String? sanctionTypeId;
+  final _SanctionType? sanctionType;
   final String requestingClubName;
   final String contactName;
   final String? contactEmail;
@@ -1075,9 +1604,14 @@ class _SanctionRequest {
     return '${_formatDate(showDate)} – ${_formatDate(showEndDate!)}';
   }
 
-  factory _SanctionRequest.fromJson(Map<String, dynamic> json) {
+  factory _SanctionRequest.fromJson(
+    Map<String, dynamic> json, {
+    _SanctionType? sanctionType,
+  }) {
     return _SanctionRequest(
       id: json['id'].toString(),
+      sanctionTypeId: _nullableString(json['sanction_type_id']),
+      sanctionType: sanctionType,
       requestingClubName:
           _nullableString(json['requesting_club_name']) ?? 'Unknown Club',
       contactName: _nullableString(json['contact_name']) ?? 'Unknown Contact',
@@ -1101,6 +1635,51 @@ class _SanctionRequest {
       staffNotes: _nullableString(json['staff_notes']),
       submittedAt: _nullableDate(json['submitted_at']),
       reviewedAt: _nullableDate(json['reviewed_at']),
+    );
+  }
+}
+
+class _SanctionType {
+  const _SanctionType({
+    required this.id,
+    required this.name,
+    required this.sanctionScope,
+    required this.basePrice,
+    required this.currency,
+    required this.isBundle,
+    required this.includedOpenCount,
+    required this.includedYouthCount,
+    required this.isActive,
+    required this.sortOrder,
+    this.description,
+  });
+
+  final String id;
+  final String name;
+  final String? description;
+  final String sanctionScope;
+  final double basePrice;
+  final String currency;
+  final bool isBundle;
+  final int includedOpenCount;
+  final int includedYouthCount;
+  final bool isActive;
+  final int sortOrder;
+
+  factory _SanctionType.fromJson(Map<String, dynamic> json) {
+    return _SanctionType(
+      id: json['id'].toString(),
+      name: _nullableString(json['name']) ?? 'Sanction Type',
+      description: _nullableString(json['description']),
+      sanctionScope:
+          _nullableString(json['sanction_scope']) ?? 'open_youth_bundle',
+      basePrice: _doubleValue(json['base_price']),
+      currency: (_nullableString(json['currency']) ?? 'USD').toUpperCase(),
+      isBundle: json['is_bundle'] == true,
+      includedOpenCount: _intValue(json['included_open_count']),
+      includedYouthCount: _intValue(json['included_youth_count']),
+      isActive: json['is_active'] != false,
+      sortOrder: _intValue(json['sort_order'], fallback: 100),
     );
   }
 }
@@ -1347,6 +1926,11 @@ String? _nullableString(dynamic value) {
   return text == null || text.isEmpty ? null : text;
 }
 
+String? _nullIfBlankValue(String value) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 DateTime? _nullableDate(dynamic value) {
   final text = value?.toString().trim();
   if (text == null || text.isEmpty) return null;
@@ -1356,6 +1940,12 @@ DateTime? _nullableDate(dynamic value) {
 double _doubleValue(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+int _intValue(dynamic value, {int fallback = 0}) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
 String _dateText(DateTime? value) {
@@ -1383,4 +1973,188 @@ String _titleCase(String value) {
 
 bool _sameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+class _NoActiveSanctionTypesCard extends StatelessWidget {
+  const _NoActiveSanctionTypesCard({required this.onManage});
+
+  final VoidCallback onManage;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: scheme.errorContainer,
+              foregroundColor: scheme.onErrorContainer,
+              child: const Icon(Icons.warning_amber_outlined),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'No active sanction types',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Create or restore at least one sanction type before adding new sanction requests.',
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: onManage,
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label: const Text('Manage Sanction Types'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LockedAddOnState extends StatelessWidget {
+  const _LockedAddOnState({
+    required this.clubName,
+    required this.onRefresh,
+  });
+
+  final String clubName;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 34,
+                    backgroundColor: scheme.primaryContainer,
+                    foregroundColor: scheme.onPrimaryContainer,
+                    child: const Icon(Icons.lock_outline, size: 34),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Sanction Requests Add-on Required',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '$clubName does not currently have the Sanction Requests Add-on enabled.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'This add-on enables online sanction request management, sanction purchasing, sanction types, and approval workflows.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Add-on Status'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SanctionPaymentSettingsCard extends StatelessWidget {
+  const _SanctionPaymentSettingsCard({
+    required this.allowCheckPayments,
+    required this.isSaving,
+    required this.onAllowCheckPaymentsChanged,
+  });
+
+  final bool allowCheckPayments;
+  final bool isSaving;
+  final ValueChanged<bool> onAllowCheckPaymentsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: scheme.primaryContainer,
+              foregroundColor: scheme.onPrimaryContainer,
+              child: const Icon(Icons.payments_outlined),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Sanction Payment Options',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Allow requesting clubs to choose whether they pay online or mail a check for sanction requests.',
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Allow mailed checks'),
+                    subtitle: const Text(
+                      'When enabled, the request form can offer “Mail a check” as a payment option.',
+                    ),
+                    value: allowCheckPayments,
+                    onChanged: isSaving ? null : onAllowCheckPaymentsChanged,
+                  ),
+                ],
+              ),
+            ),
+            if (isSaving) ...[
+              const SizedBox(width: 12),
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -23,6 +23,7 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   _ClubReportsDashboard? _dashboard;
+  _ClubReportFeatureAccess _features = const _ClubReportFeatureAccess.base();
 
   @override
   void initState() {
@@ -37,16 +38,29 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
     });
 
     try {
-      final response = await _supabase.rpc(
+      final clubResponse = await _supabase
+          .from('clubs')
+          .select(
+            'membership_management_addon_enabled,'
+            'sanction_requests_addon_enabled,'
+            'events_meetings_addon_enabled,'
+            'sweepstakes_addon_enabled',
+          )
+          .eq('id', widget.club.clubId)
+          .single();
+
+      final dashboardResponse = await _supabase.rpc(
         'get_club_reports_dashboard',
         params: {'p_club_id': widget.club.clubId},
       );
 
+      final clubRow = Map<String, dynamic>.from(clubResponse);
+      final dashboardRow = Map<String, dynamic>.from(dashboardResponse as Map);
+
       if (!mounted) return;
       setState(() {
-        _dashboard = _ClubReportsDashboard.fromJson(
-          Map<String, dynamic>.from(response as Map),
-        );
+        _features = _ClubReportFeatureAccess.fromJson(clubRow);
+        _dashboard = _ClubReportsDashboard.fromJson(dashboardRow);
         _isLoading = false;
       });
     } catch (error) {
@@ -115,9 +129,11 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Dashboard overview of memberships, dues, applications, sanctions, communications, documents, events, and sweepstakes.',
+            'Dashboard overview of memberships, applications, communications, documents, and enabled add-on reports.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
+          const SizedBox(height: 12),
+          _ReportsAccessSummaryCard(features: _features),
           const SizedBox(height: 16),
           if (_errorMessage != null) ...[
             Material(
@@ -162,30 +178,37 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
           ),
           const SizedBox(height: 20),
           const _SectionTitle('Payments & Dues'),
-          _ResponsiveCards(
-            children: [
-              _ReportMetricCard(
-                icon: Icons.payments_outlined,
-                label: 'Total Due',
-                value: _money(dashboard.payments.totalDue),
-              ),
-              _ReportMetricCard(
-                icon: Icons.check_circle_outline,
-                label: 'Collected',
-                value: _money(dashboard.payments.totalPaid),
-              ),
-              _ReportMetricCard(
-                icon: Icons.account_balance_wallet_outlined,
-                label: 'Outstanding',
-                value: _money(dashboard.payments.outstanding),
-              ),
-              _ReportMetricCard(
-                icon: Icons.receipt_long_outlined,
-                label: 'Unpaid Records',
-                value: dashboard.payments.unpaidCount.toString(),
-              ),
-            ],
-          ),
+          if (_features.membershipManagement)
+            _ResponsiveCards(
+              children: [
+                _ReportMetricCard(
+                  icon: Icons.payments_outlined,
+                  label: 'Total Due',
+                  value: _money(dashboard.payments.totalDue),
+                ),
+                _ReportMetricCard(
+                  icon: Icons.check_circle_outline,
+                  label: 'Collected',
+                  value: _money(dashboard.payments.totalPaid),
+                ),
+                _ReportMetricCard(
+                  icon: Icons.account_balance_wallet_outlined,
+                  label: 'Outstanding',
+                  value: _money(dashboard.payments.outstanding),
+                ),
+                _ReportMetricCard(
+                  icon: Icons.receipt_long_outlined,
+                  label: 'Unpaid Records',
+                  value: dashboard.payments.unpaidCount.toString(),
+                ),
+              ],
+            )
+          else
+            const _LockedReportSection(
+              title: 'Membership Management Add-on Required',
+              message:
+                  'Payment totals, collected dues, outstanding balances, and unpaid records are available when the Membership Management Add-on is enabled.',
+            ),
           const SizedBox(height: 20),
           const _SectionTitle('Operations'),
           _ResponsiveCards(
@@ -197,10 +220,16 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
                 helper: '${dashboard.operations.pendingApplications} pending',
               ),
               _ReportMetricCard(
-                icon: Icons.approval_outlined,
+                icon: _features.sanctionRequests
+                    ? Icons.approval_outlined
+                    : Icons.lock_outline,
                 label: 'Sanctions',
-                value: dashboard.operations.totalSanctions.toString(),
-                helper: '${dashboard.operations.pendingSanctions} pending',
+                value: _features.sanctionRequests
+                    ? dashboard.operations.totalSanctions.toString()
+                    : 'Locked',
+                helper: _features.sanctionRequests
+                    ? '${dashboard.operations.pendingSanctions} pending'
+                    : 'Sanction Requests Add-on',
               ),
               _ReportMetricCard(
                 icon: Icons.campaign_outlined,
@@ -216,17 +245,28 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
                 helper: '${dashboard.operations.activeDocuments} active',
               ),
               _ReportMetricCard(
-                icon: Icons.event_note_outlined,
+                icon: _features.eventsMeetings
+                    ? Icons.event_note_outlined
+                    : Icons.lock_outline,
                 label: 'Events',
-                value: dashboard.operations.totalEvents.toString(),
-                helper: '${dashboard.operations.upcomingEvents} upcoming',
+                value: _features.eventsMeetings
+                    ? dashboard.operations.totalEvents.toString()
+                    : 'Locked',
+                helper: _features.eventsMeetings
+                    ? '${dashboard.operations.upcomingEvents} upcoming'
+                    : 'Events & Meetings Add-on',
               ),
               _ReportMetricCard(
-                icon: Icons.emoji_events_outlined,
+                icon: _features.sweepstakes
+                    ? Icons.emoji_events_outlined
+                    : Icons.lock_outline,
                 label: 'Sweepstakes Seasons',
-                value: dashboard.operations.sweepstakesSeasons.toString(),
-                helper:
-                    '${dashboard.operations.activeSweepstakesSeasons} active',
+                value: _features.sweepstakes
+                    ? dashboard.operations.sweepstakesSeasons.toString()
+                    : 'Locked',
+                helper: _features.sweepstakes
+                    ? '${dashboard.operations.activeSweepstakesSeasons} active'
+                    : 'Sweepstakes Add-on',
               ),
             ],
           ),
@@ -251,7 +291,13 @@ class _ClubReportsScreenState extends State<ClubReportsScreen> {
             ),
           const SizedBox(height: 20),
           const _SectionTitle('Outstanding Dues'),
-          if (dashboard.outstandingDues.isEmpty)
+          if (!_features.membershipManagement)
+            const _LockedReportSection(
+              title: 'Membership Management Add-on Required',
+              message:
+                  'Outstanding dues reports are available when the Membership Management Add-on is enabled.',
+            )
+          else if (dashboard.outstandingDues.isEmpty)
             const _InlineEmptyState(
               title: 'No outstanding dues',
               message: 'No unpaid or partially paid membership dues were found.',
@@ -325,6 +371,183 @@ class _ReportMetricCard extends StatelessWidget {
     );
   }
 }
+
+class _ReportsAccessSummaryCard extends StatelessWidget {
+  const _ReportsAccessSummaryCard({required this.features});
+
+  final _ClubReportFeatureAccess features;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  backgroundColor: scheme.primaryContainer,
+                  foregroundColor: scheme.onPrimaryContainer,
+                  child: const Icon(Icons.bar_chart_outlined),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Included and Add-on Reports',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Basic membership, application, communication, and document reports are included. Add-on report areas unlock when those tools are enabled.',
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                const _ReportFeatureChip(label: 'Basic Reports', enabled: true),
+                _ReportFeatureChip(
+                  label: 'Payments & Dues',
+                  enabled: features.membershipManagement,
+                ),
+                _ReportFeatureChip(
+                  label: 'Sanctions',
+                  enabled: features.sanctionRequests,
+                ),
+                _ReportFeatureChip(
+                  label: 'Events',
+                  enabled: features.eventsMeetings,
+                ),
+                _ReportFeatureChip(
+                  label: 'Sweepstakes',
+                  enabled: features.sweepstakes,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportFeatureChip extends StatelessWidget {
+  const _ReportFeatureChip({required this.label, required this.enabled});
+
+  final String label;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Chip(
+      avatar: Icon(
+        enabled ? Icons.check_circle_outline : Icons.lock_outline,
+        size: 18,
+      ),
+      label: Text(label),
+      backgroundColor:
+          enabled ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+      side: BorderSide(
+        color: enabled ? scheme.primary : scheme.outlineVariant,
+      ),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _LockedReportSection extends StatelessWidget {
+  const _LockedReportSection({
+    required this.title,
+    required this.message,
+  });
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: scheme.surfaceContainerHighest,
+              foregroundColor: scheme.onSurfaceVariant,
+              child: const Icon(Icons.lock_outline),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(message),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class _ClubReportFeatureAccess {
+  const _ClubReportFeatureAccess({
+    required this.membershipManagement,
+    required this.sanctionRequests,
+    required this.eventsMeetings,
+    required this.sweepstakes,
+  });
+
+  const _ClubReportFeatureAccess.base()
+      : membershipManagement = false,
+        sanctionRequests = false,
+        eventsMeetings = false,
+        sweepstakes = false;
+
+  final bool membershipManagement;
+  final bool sanctionRequests;
+  final bool eventsMeetings;
+  final bool sweepstakes;
+
+  factory _ClubReportFeatureAccess.fromJson(Map<String, dynamic> json) {
+    return _ClubReportFeatureAccess(
+      membershipManagement:
+          json['membership_management_addon_enabled'] == true,
+      sanctionRequests: json['sanction_requests_addon_enabled'] == true,
+      eventsMeetings: json['events_meetings_addon_enabled'] == true,
+      sweepstakes: json['sweepstakes_addon_enabled'] == true,
+    );
+  }
+}
+
 
 class _ResponsiveCards extends StatelessWidget {
   const _ResponsiveCards({required this.children});
