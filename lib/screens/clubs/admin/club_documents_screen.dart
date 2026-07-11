@@ -11,10 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../models/clubs/club_summary.dart';
 
 class ClubDocumentsScreen extends StatefulWidget {
-  const ClubDocumentsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubDocumentsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -88,9 +85,7 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
       final categories = categoryRows
           .whereType<Map>()
           .map(
-            (row) => _DocumentCategory.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) => _DocumentCategory.fromJson(Map<String, dynamic>.from(row)),
           )
           .toList();
 
@@ -99,17 +94,14 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
       };
 
       final documentRows = responses[0] as List;
-      final documents = documentRows
-          .whereType<Map>()
-          .map((row) {
-            final json = Map<String, dynamic>.from(row);
-            final categoryId = json['category_id']?.toString();
-            return _ClubDocument.fromJson(
-              json,
-              category: categoryId == null ? null : categoryMap[categoryId],
-            );
-          })
-          .toList();
+      final documents = documentRows.whereType<Map>().map((row) {
+        final json = Map<String, dynamic>.from(row);
+        final categoryId = json['category_id']?.toString();
+        return _ClubDocument.fromJson(
+          json,
+          category: categoryId == null ? null : categoryMap[categoryId],
+        );
+      }).toList();
 
       final storageRow = Map<String, dynamic>.from(responses[2] as Map);
       final storageLimitBytes =
@@ -140,7 +132,8 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
     return _documents.where((document) {
       final matchesStatus =
           _statusFilter == 'all' || document.status == _statusFilter;
-      final matchesVisibility = _visibilityFilter == 'all' ||
+      final matchesVisibility =
+          _visibilityFilter == 'all' ||
           document.visibility == _visibilityFilter;
 
       if (!matchesStatus || !matchesVisibility) return false;
@@ -196,7 +189,8 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
 
       if (document.externalUrl != null) {
         url = document.externalUrl;
-      } else if (document.storageBucket != null && document.storagePath != null) {
+      } else if (document.storageBucket != null &&
+          document.storagePath != null) {
         url = await _supabase.storage
             .from(document.storageBucket!)
             .createSignedUrl(document.storagePath!, 60 * 10);
@@ -211,10 +205,7 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
         throw Exception('The document URL is not valid.');
       }
 
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
       if (!opened) {
         throw Exception('The document could not be opened.');
@@ -239,10 +230,7 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
     try {
       await _supabase.rpc(
         'set_club_document_status',
-        params: {
-          'p_document_id': document.id,
-          'p_status': status,
-        },
+        params: {'p_document_id': document.id, 'p_status': status},
       );
       await _loadData();
     } catch (error) {
@@ -309,9 +297,9 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -328,8 +316,8 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
               final width = useFourColumns
                   ? (constraints.maxWidth - 36) / 4
                   : useTwoColumns
-                      ? (constraints.maxWidth - 12) / 2
-                      : constraints.maxWidth;
+                  ? (constraints.maxWidth - 12) / 2
+                  : constraints.maxWidth;
 
               return Wrap(
                 spacing: 12,
@@ -451,9 +439,9 @@ class _ClubDocumentsScreenState extends State<ClubDocumentsScreen> {
           ],
           Text(
             '${filtered.length} ${filtered.length == 1 ? 'document' : 'documents'}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           if (_documents.isEmpty)
@@ -545,10 +533,8 @@ class _DocumentCard extends StatelessWidget {
                       children: [
                         Text(
                           document.title,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
                         if (document.category != null)
                           Text(document.category!.name),
@@ -727,23 +713,29 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
     final existing = widget.existing;
 
     _titleController = TextEditingController(text: existing?.title ?? '');
-    _descriptionController =
-        TextEditingController(text: existing?.description ?? '');
+    _descriptionController = TextEditingController(
+      text: existing?.description ?? '',
+    );
     _fileNameController = TextEditingController(text: existing?.fileName ?? '');
-    _bucketController =
-        TextEditingController(text: existing?.storageBucket ?? '');
-    _pathController =
-        TextEditingController(text: existing?.storagePath ?? '');
-    _externalUrlController =
-        TextEditingController(text: existing?.externalUrl ?? '');
-    _effectiveDateController =
-        TextEditingController(text: _dateText(existing?.effectiveDate));
-    _expiresAtController =
-        TextEditingController(text: _dateText(existing?.expiresAt));
-    _versionLabelController =
-        TextEditingController(text: existing?.versionLabel ?? '');
-    _versionNotesController =
-        TextEditingController(text: existing?.versionNotes ?? '');
+    _bucketController = TextEditingController(
+      text: existing?.storageBucket ?? '',
+    );
+    _pathController = TextEditingController(text: existing?.storagePath ?? '');
+    _externalUrlController = TextEditingController(
+      text: existing?.externalUrl ?? '',
+    );
+    _effectiveDateController = TextEditingController(
+      text: _dateText(existing?.effectiveDate),
+    );
+    _expiresAtController = TextEditingController(
+      text: _dateText(existing?.expiresAt),
+    );
+    _versionLabelController = TextEditingController(
+      text: existing?.versionLabel ?? '',
+    );
+    _versionNotesController = TextEditingController(
+      text: existing?.versionNotes ?? '',
+    );
 
     _categoryId = existing?.categoryId;
     _visibility = existing?.visibility ?? 'members';
@@ -829,13 +821,12 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
         'documents/${DateTime.now().millisecondsSinceEpoch}-$safeName';
     final contentType = _contentTypeForFile(fileName);
 
-    await _supabase.storage.from(bucketName).uploadBinary(
+    await _supabase.storage
+        .from(bucketName)
+        .uploadBinary(
           storagePath,
           bytes,
-          fileOptions: FileOptions(
-            contentType: contentType,
-            upsert: false,
-          ),
+          fileOptions: FileOptions(contentType: contentType, upsert: false),
         );
 
     return _UploadedDocumentFile(
@@ -883,7 +874,9 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
   String _safeStorageFileName(String fileName) {
     final dotIndex = fileName.lastIndexOf('.');
     final name = dotIndex <= 0 ? fileName : fileName.substring(0, dotIndex);
-    final extension = dotIndex <= 0 ? '' : fileName.substring(dotIndex).toLowerCase();
+    final extension = dotIndex <= 0
+        ? ''
+        : fileName.substring(dotIndex).toLowerCase();
     final safeName = name
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
@@ -965,7 +958,8 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
         expiresAt != null &&
         expiresAt.isBefore(effectiveDate)) {
       setState(() {
-        _errorMessage = 'The expiration date cannot be before the effective date.';
+        _errorMessage =
+            'The expiration date cannot be before the effective date.';
       });
       return;
     }
@@ -998,7 +992,8 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
           uploadedFile?.fileName ?? _nullIfBlank(_fileNameController.text);
       final fileSizeBytes =
           uploadedFile?.fileSizeBytes ?? widget.existing?.fileSizeBytes;
-      final contentType = uploadedFile?.contentType ?? widget.existing?.contentType;
+      final contentType =
+          uploadedFile?.contentType ?? widget.existing?.contentType;
       final hasUploadedOrExistingStorage = storagePath != null;
 
       await _supabase.rpc(
@@ -1010,12 +1005,16 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
           'p_title': _titleController.text.trim(),
           'p_description': _nullIfBlank(_descriptionController.text),
           'p_file_name': fileName,
-          'p_storage_bucket': hasUploadedOrExistingStorage ? storageBucket : null,
+          'p_storage_bucket': hasUploadedOrExistingStorage
+              ? storageBucket
+              : null,
           'p_storage_path': hasUploadedOrExistingStorage ? storagePath : null,
           'p_external_url': hasExternalUrl
               ? _nullIfBlank(_externalUrlController.text)
               : null,
-          'p_file_size_bytes': hasUploadedOrExistingStorage ? fileSizeBytes : null,
+          'p_file_size_bytes': hasUploadedOrExistingStorage
+              ? fileSizeBytes
+              : null,
           'p_content_type': hasUploadedOrExistingStorage ? contentType : null,
           'p_visibility': _visibility,
           'p_status': _status,
@@ -1104,8 +1103,9 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
                           value: null,
                           child: Text('Uncategorized'),
                         ),
-                        for (final category in widget.categories
-                            .where((category) => category.isActive))
+                        for (final category in widget.categories.where(
+                          (category) => category.isActive,
+                        ))
                           DropdownMenuItem(
                             value: category.id,
                             child: Text(category.name),
@@ -1129,7 +1129,10 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
                         border: OutlineInputBorder(),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 'public', child: Text('Public')),
+                        DropdownMenuItem(
+                          value: 'public',
+                          child: Text('Public'),
+                        ),
                         DropdownMenuItem(
                           value: 'members',
                           child: Text('Members Only'),
@@ -1155,7 +1158,10 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
                       ),
                       items: const [
                         DropdownMenuItem(value: 'draft', child: Text('Draft')),
-                        DropdownMenuItem(value: 'active', child: Text('Active')),
+                        DropdownMenuItem(
+                          value: 'active',
+                          child: Text('Active'),
+                        ),
                         DropdownMenuItem(
                           value: 'archived',
                           child: Text('Archived'),
@@ -1164,7 +1170,9 @@ class _DocumentEditorDialogState extends State<_DocumentEditorDialog> {
                       onChanged: _isSaving
                           ? null
                           : (value) {
-                              if (value != null) setState(() => _status = value);
+                              if (value != null) {
+                                setState(() => _status = value);
+                              }
                             },
                     ),
                   ],
@@ -1316,10 +1324,7 @@ class _CategoryManagerDialog extends StatelessWidget {
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _CategoryEditorDialog(
-        clubId: clubId,
-        existing: existing,
-      ),
+      builder: (_) => _CategoryEditorDialog(clubId: clubId, existing: existing),
     );
 
     if (changed == true && context.mounted) {
@@ -1344,8 +1349,7 @@ class _CategoryManagerDialog extends StatelessWidget {
             : ListView.separated(
                 shrinkWrap: true,
                 itemCount: categories.length,
-                separatorBuilder: (context, index) =>
-                    const Divider(height: 1),
+                separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final category = categories[index];
                   return ListTile(
@@ -1380,10 +1384,7 @@ class _CategoryManagerDialog extends StatelessWidget {
 }
 
 class _CategoryEditorDialog extends StatefulWidget {
-  const _CategoryEditorDialog({
-    required this.clubId,
-    this.existing,
-  });
+  const _CategoryEditorDialog({required this.clubId, this.existing});
 
   final String clubId;
   final _DocumentCategory? existing;
@@ -1407,8 +1408,9 @@ class _CategoryEditorDialogState extends State<_CategoryEditorDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.existing?.name ?? '');
-    _descriptionController =
-        TextEditingController(text: widget.existing?.description ?? '');
+    _descriptionController = TextEditingController(
+      text: widget.existing?.description ?? '',
+    );
     _sortOrderController = TextEditingController(
       text: (widget.existing?.sortOrder ?? 0).toString(),
     );
@@ -1676,8 +1678,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -1722,9 +1724,8 @@ class _StorageUsageCard extends StatelessWidget {
                     children: [
                       Text(
                         'Club Storage',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -1739,8 +1740,8 @@ class _StorageUsageCard extends StatelessWidget {
                   Text(
                     '${(progress * 100).toStringAsFixed(0)}%',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
               ],
             ),
@@ -1755,9 +1756,9 @@ class _StorageUsageCard extends StatelessWidget {
               hasLimit
                   ? '${_formatFileSize(remainingBytes)} remaining on this club storage plan. Files are limited to 10 MB each.'
                   : 'No storage limit is currently set for this club.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -1792,8 +1793,8 @@ class _BaseDocumentsAccessCard extends StatelessWidget {
                   Text(
                     'Included with Base Club Tools',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
@@ -1810,10 +1811,7 @@ class _BaseDocumentsAccessCard extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.text,
-  });
+  const _DetailRow({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1850,8 +1848,7 @@ class _ResponsiveFields extends StatelessWidget {
           spacing: 12,
           runSpacing: 14,
           children: [
-            for (final child in children)
-              SizedBox(width: width, child: child),
+            for (final child in children) SizedBox(width: width, child: child),
           ],
         );
       },
@@ -1910,9 +1907,9 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -1948,8 +1945,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1991,9 +1988,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -2150,9 +2147,7 @@ class _DocumentUploadBox extends StatelessWidget {
                 ),
               ),
               child: Icon(
-                hasFile
-                    ? _iconForFile(fileName)
-                    : Icons.upload_file_outlined,
+                hasFile ? _iconForFile(fileName) : Icons.upload_file_outlined,
                 size: 34,
               ),
             ),
@@ -2164,8 +2159,8 @@ class _DocumentUploadBox extends StatelessWidget {
                   Text(
                     hasFile ? fileName : 'No document file selected',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -2174,7 +2169,8 @@ class _DocumentUploadBox extends StatelessWidget {
                         : 'Selected file size: $selectedFileSizeLabel',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  if (existingStoragePath != null && selectedFileName == null) ...[
+                  if (existingStoragePath != null &&
+                      selectedFileName == null) ...[
                     const SizedBox(height: 6),
                     SelectableText(
                       existingStoragePath!,
@@ -2187,7 +2183,9 @@ class _DocumentUploadBox extends StatelessWidget {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: isPickingFile || isSaving ? null : onPickFile,
+                        onPressed: isPickingFile || isSaving
+                            ? null
+                            : onPickFile,
                         icon: isPickingFile
                             ? const SizedBox(
                                 width: 18,

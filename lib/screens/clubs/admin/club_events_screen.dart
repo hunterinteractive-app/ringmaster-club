@@ -4,12 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import 'club_documents_screen.dart';
 
 class ClubEventsScreen extends StatefulWidget {
-  const ClubEventsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubEventsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -81,7 +79,8 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
               'id,club_id,related_document_id,title,description,event_type,'
               'status,visibility,start_at,end_at,timezone,location_name,'
               'location_address,virtual_url,agenda,notes,requires_rsvp,'
-              'rsvp_deadline,created_at,updated_at',
+              'rsvp_deadline,created_at,updated_at,'
+              'club_event_documents(document_id)',
             )
             .eq('club_id', widget.club.clubId)
             .order('start_at', ascending: true),
@@ -96,9 +95,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
       final documents = documentRows
           .whereType<Map>()
           .map(
-            (row) => _RelatedDocument.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) => _RelatedDocument.fromJson(Map<String, dynamic>.from(row)),
           )
           .toList();
 
@@ -107,18 +104,33 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
       };
 
       final eventRows = responses[0] as List;
-      final events = eventRows
-          .whereType<Map>()
-          .map((row) {
-            final json = Map<String, dynamic>.from(row);
-            final documentId = json['related_document_id']?.toString();
-            return _ClubEvent.fromJson(
-              json,
-              relatedDocument:
-                  documentId == null ? null : documentMap[documentId],
-            );
-          })
-          .toList();
+      final events = eventRows.whereType<Map>().map((row) {
+        final json = Map<String, dynamic>.from(row);
+        final documentId = json['related_document_id']?.toString();
+        final relatedDocuments = <String, _RelatedDocument>{};
+
+        final relationshipRows = json['club_event_documents'];
+        if (relationshipRows is List) {
+          for (final relationshipRow in relationshipRows.whereType<Map>()) {
+            final relatedId = relationshipRow['document_id']?.toString();
+            final document = relatedId == null ? null : documentMap[relatedId];
+            if (document != null) relatedDocuments[document.id] = document;
+          }
+        }
+
+        // Preserve events that only have the legacy relationship populated.
+        final legacyDocument = documentId == null
+            ? null
+            : documentMap[documentId];
+        if (legacyDocument != null) {
+          relatedDocuments.putIfAbsent(legacyDocument.id, () => legacyDocument);
+        }
+
+        return _ClubEvent.fromJson(
+          json,
+          relatedDocuments: relatedDocuments.values.toList(),
+        );
+      }).toList();
 
       if (!mounted) return;
       setState(() {
@@ -142,7 +154,8 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
     return _events.where((event) {
       final matchesStatus =
           _statusFilter == 'all' || event.status == _statusFilter;
-      final matchesType = _typeFilter == 'all' || event.eventType == _typeFilter;
+      final matchesType =
+          _typeFilter == 'all' || event.eventType == _typeFilter;
       if (!matchesStatus || !matchesType) return false;
       if (query.isEmpty) return true;
 
@@ -153,7 +166,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         event.locationAddress,
         event.agenda,
         event.notes,
-        event.relatedDocument?.title,
+        ...event.relatedDocuments.map((document) => document.title),
       ].whereType<String>().join(' ').toLowerCase();
 
       return searchable.contains(query);
@@ -171,7 +184,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Meetings & Events Requires an Add-on'),
         content: const Text(
-          'Meetings, agendas, event notices, and RSVP tools are available with the Events & Meetings Add-on. The club owner can enable this when the club is ready to use it.',
+          'Meetings, agendas, and event notices are available with the Events & Meetings Add-on. The club owner can enable this when the club is ready to use it.',
         ),
         actions: [
           TextButton(
@@ -192,7 +205,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => _EventEditorDialog(
-        clubId: widget.club.clubId,
+        club: widget.club,
         documents: _documents,
         existing: existing,
       ),
@@ -209,17 +222,14 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
     try {
       await _supabase.rpc(
         'set_club_event_status',
-        params: {
-          'p_event_id': event.id,
-          'p_status': status,
-        },
+        params: {'p_event_id': event.id, 'p_status': status},
       );
       await _loadData();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to update event: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unable to update event: $error')));
     }
   }
 
@@ -240,8 +250,8 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         onPressed: _isLoading
             ? null
             : _eventsAddonEnabled
-                ? () => _openEditor()
-                : _showLockedFeature,
+            ? () => _openEditor()
+            : _showLockedFeature,
         icon: Icon(_eventsAddonEnabled ? Icons.add : Icons.lock_outline),
         label: Text(_eventsAddonEnabled ? 'Add Event' : 'Add-on Required'),
       ),
@@ -281,9 +291,9 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -379,7 +389,10 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
                     DropdownMenuItem(value: 'all', child: Text('All')),
                     DropdownMenuItem(value: 'meeting', child: Text('Meeting')),
                     DropdownMenuItem(value: 'show', child: Text('Show')),
-                    DropdownMenuItem(value: 'deadline', child: Text('Deadline')),
+                    DropdownMenuItem(
+                      value: 'deadline',
+                      child: Text('Deadline'),
+                    ),
                     DropdownMenuItem(value: 'social', child: Text('Social')),
                     DropdownMenuItem(value: 'other', child: Text('Other')),
                   ],
@@ -404,9 +417,9 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
           ],
           Text(
             '${filtered.length} ${filtered.length == 1 ? 'event' : 'events'}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           if (_events.isEmpty)
@@ -462,10 +475,7 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
 }
 
 class _LockedAddOnState extends StatelessWidget {
-  const _LockedAddOnState({
-    required this.clubName,
-    required this.onRefresh,
-  });
+  const _LockedAddOnState({required this.clubName, required this.onRefresh});
 
   final String clubName;
   final VoidCallback onRefresh;
@@ -496,8 +506,8 @@ class _LockedAddOnState extends StatelessWidget {
                     'Events & Meetings Add-on Required',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -506,7 +516,7 @@ class _LockedAddOnState extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'This add-on enables meetings, agendas, event notices, deadlines, and RSVP tools.',
+                    'This add-on enables meetings, agendas, event notices, and deadlines.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 20),
@@ -565,10 +575,8 @@ class _EventCard extends StatelessWidget {
                       children: [
                         Text(
                           event.title,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
                         Text(event.dateLabel),
                       ],
@@ -614,11 +622,6 @@ class _EventCard extends StatelessWidget {
                   ),
                   Chip(label: Text(_titleCase(event.eventType))),
                   Chip(label: Text(_titleCase(event.visibility))),
-                  if (event.requiresRsvp)
-                    const Chip(
-                      avatar: Icon(Icons.how_to_reg_outlined, size: 18),
-                      label: Text('RSVP'),
-                    ),
                 ],
               ),
               if (event.description != null) ...[
@@ -641,15 +644,10 @@ class _EventCard extends StatelessWidget {
                   icon: Icons.video_call_outlined,
                   text: event.virtualUrl!,
                 ),
-              if (event.relatedDocument != null)
+              for (final document in event.relatedDocuments)
                 _DetailRow(
                   icon: Icons.description_outlined,
-                  text: event.relatedDocument!.title,
-                ),
-              if (event.rsvpDeadline != null)
-                _DetailRow(
-                  icon: Icons.event_busy_outlined,
-                  text: 'RSVP by ${_formatDateTime(event.rsvpDeadline!)}',
+                  text: document.title,
                 ),
             ],
           ),
@@ -674,12 +672,12 @@ class _EventCard extends StatelessWidget {
 
 class _EventEditorDialog extends StatefulWidget {
   const _EventEditorDialog({
-    required this.clubId,
+    required this.club,
     required this.documents,
     this.existing,
   });
 
-  final String clubId;
+  final ClubSummary club;
   final List<_RelatedDocument> documents;
   final _ClubEvent? existing;
 
@@ -695,20 +693,19 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
   late final TextEditingController _descriptionController;
   late final TextEditingController _startAtController;
   late final TextEditingController _endAtController;
-  late final TextEditingController _timezoneController;
   late final TextEditingController _locationNameController;
   late final TextEditingController _locationAddressController;
   late final TextEditingController _virtualUrlController;
   late final TextEditingController _agendaController;
   late final TextEditingController _notesController;
-  late final TextEditingController _rsvpDeadlineController;
-
-  String? _relatedDocumentId;
+  late List<_RelatedDocument> _documents;
+  late final Set<String> _relatedDocumentIds;
   late String _eventType;
   late String _status;
   late String _visibility;
-  bool _requiresRsvp = false;
+  late String _timezone;
   bool _isSaving = false;
+  bool _isLoadingDocuments = false;
   String? _errorMessage;
 
   @override
@@ -717,35 +714,35 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     final existing = widget.existing;
 
     _titleController = TextEditingController(text: existing?.title ?? '');
-    _descriptionController =
-        TextEditingController(text: existing?.description ?? '');
+    _descriptionController = TextEditingController(
+      text: existing?.description ?? '',
+    );
     _startAtController = TextEditingController(
       text: existing == null ? '' : _dateTimeText(existing.startAt),
     );
     _endAtController = TextEditingController(
       text: existing?.endAt == null ? '' : _dateTimeText(existing!.endAt!),
     );
-    _timezoneController =
-        TextEditingController(text: existing?.timezone ?? 'America/New_York');
-    _locationNameController =
-        TextEditingController(text: existing?.locationName ?? '');
-    _locationAddressController =
-        TextEditingController(text: existing?.locationAddress ?? '');
-    _virtualUrlController =
-        TextEditingController(text: existing?.virtualUrl ?? '');
+    _timezone = existing?.timezone ?? _deviceTimezone();
+    _locationNameController = TextEditingController(
+      text: existing?.locationName ?? '',
+    );
+    _locationAddressController = TextEditingController(
+      text: existing?.locationAddress ?? '',
+    );
+    _virtualUrlController = TextEditingController(
+      text: existing?.virtualUrl ?? '',
+    );
     _agendaController = TextEditingController(text: existing?.agenda ?? '');
     _notesController = TextEditingController(text: existing?.notes ?? '');
-    _rsvpDeadlineController = TextEditingController(
-      text: existing?.rsvpDeadline == null
-          ? ''
-          : _dateTimeText(existing!.rsvpDeadline!),
-    );
-
-    _relatedDocumentId = existing?.relatedDocumentId;
+    _documents = List<_RelatedDocument>.of(widget.documents);
+    _relatedDocumentIds = {
+      ...?existing?.relatedDocuments.map((document) => document.id),
+      if (existing?.relatedDocumentId != null) existing!.relatedDocumentId!,
+    };
     _eventType = existing?.eventType ?? 'meeting';
     _status = existing?.status ?? 'draft';
     _visibility = existing?.visibility ?? 'members';
-    _requiresRsvp = existing?.requiresRsvp ?? false;
   }
 
   @override
@@ -754,13 +751,11 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     _descriptionController.dispose();
     _startAtController.dispose();
     _endAtController.dispose();
-    _timezoneController.dispose();
     _locationNameController.dispose();
     _locationAddressController.dispose();
     _virtualUrlController.dispose();
     _agendaController.dispose();
     _notesController.dispose();
-    _rsvpDeadlineController.dispose();
     super.dispose();
   }
 
@@ -770,7 +765,6 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
 
     final startAt = _parseDateTime(_startAtController.text);
     final endAt = _parseDateTime(_endAtController.text);
-    final rsvpDeadline = _parseDateTime(_rsvpDeadlineController.text);
 
     if (startAt == null) {
       setState(() => _errorMessage = 'Start date and time are required.');
@@ -780,15 +774,6 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     if (endAt != null && endAt.isBefore(startAt)) {
       setState(() {
         _errorMessage = 'End date and time cannot be before the start.';
-      });
-      return;
-    }
-
-    if (_requiresRsvp &&
-        rsvpDeadline != null &&
-        rsvpDeadline.isAfter(startAt)) {
-      setState(() {
-        _errorMessage = 'RSVP deadline cannot be after the event starts.';
       });
       return;
     }
@@ -803,8 +788,11 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
         'save_club_event',
         params: {
           'p_event_id': widget.existing?.id,
-          'p_club_id': widget.clubId,
-          'p_related_document_id': _relatedDocumentId,
+          'p_club_id': widget.club.clubId,
+          // Keep the first selection in the legacy field until all consumers
+          // have moved to club_event_documents.
+          'p_related_document_id': _relatedDocumentIds.firstOrNull,
+          'p_related_document_ids': _relatedDocumentIds.toList(),
           'p_title': _titleController.text.trim(),
           'p_description': _nullIfBlank(_descriptionController.text),
           'p_event_type': _eventType,
@@ -812,16 +800,14 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
           'p_visibility': _visibility,
           'p_start_at': startAt.toIso8601String(),
           'p_end_at': endAt?.toIso8601String(),
-          'p_timezone': _nullIfBlank(_timezoneController.text) ?? 'America/New_York',
+          'p_timezone': _timezone,
           'p_location_name': _nullIfBlank(_locationNameController.text),
           'p_location_address': _nullIfBlank(_locationAddressController.text),
           'p_virtual_url': _nullIfBlank(_virtualUrlController.text),
           'p_agenda': _nullIfBlank(_agendaController.text),
           'p_notes': _nullIfBlank(_notesController.text),
-          'p_requires_rsvp': _requiresRsvp,
-          'p_rsvp_deadline': _requiresRsvp
-              ? rsvpDeadline?.toIso8601String()
-              : null,
+          'p_requires_rsvp': false,
+          'p_rsvp_deadline': null,
         },
       );
 
@@ -837,7 +823,8 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
   }
 
   Future<void> _pickDateTime(TextEditingController controller) async {
-    final initial = _parseDateTime(controller.text) ??
+    final initial =
+        _parseDateTime(controller.text) ??
         DateTime.now().add(const Duration(hours: 1));
 
     final date = await showDatePicker(
@@ -860,6 +847,99 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
       DateTime(date.year, date.month, date.day, time.hour, time.minute),
     );
     setState(() {});
+  }
+
+  Future<void> _chooseRelatedDocuments() async {
+    final selected = Set<String>.of(_relatedDocumentIds);
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Select Related Documents'),
+          content: SizedBox(
+            width: 520,
+            child: _documents.isEmpty
+                ? const Text(
+                    'No documents are available yet. Use Add Document to upload '
+                    'or save one to the club account.',
+                  )
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final document in _documents)
+                        CheckboxListTile(
+                          value: selected.contains(document.id),
+                          title: Text(document.title),
+                          subtitle: Text(
+                            '${_titleCase(document.status)} · '
+                            '${_titleCase(document.visibility)}',
+                          ),
+                          onChanged: (checked) {
+                            setDialogState(() {
+                              if (checked == true) {
+                                selected.add(document.id);
+                              } else {
+                                selected.remove(document.id);
+                              }
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(selected),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        _relatedDocumentIds
+          ..clear()
+          ..addAll(result);
+      });
+    }
+  }
+
+  Future<void> _openDocuments() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          Dialog.fullscreen(child: ClubDocumentsScreen(club: widget.club)),
+    );
+    if (!mounted) return;
+
+    setState(() => _isLoadingDocuments = true);
+    try {
+      final rows = await _supabase
+          .from('club_documents')
+          .select('id,title,status,visibility')
+          .eq('club_id', widget.club.clubId)
+          .order('title', ascending: true);
+      final documents = rows
+          .whereType<Map>()
+          .map(
+            (row) => _RelatedDocument.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .toList();
+      if (!mounted) return;
+      setState(() => _documents = documents);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = 'Unable to refresh documents: $error');
+    } finally {
+      if (mounted) setState(() => _isLoadingDocuments = false);
+    }
   }
 
   @override
@@ -900,7 +980,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                   minLines: 2,
                   maxLines: 5,
                   decoration: const InputDecoration(
-                    labelText: 'Description',
+                    labelText: 'Description (optional)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -914,10 +994,19 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                         border: OutlineInputBorder(),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 'meeting', child: Text('Meeting')),
+                        DropdownMenuItem(
+                          value: 'meeting',
+                          child: Text('Meeting'),
+                        ),
                         DropdownMenuItem(value: 'show', child: Text('Show')),
-                        DropdownMenuItem(value: 'deadline', child: Text('Deadline')),
-                        DropdownMenuItem(value: 'social', child: Text('Social')),
+                        DropdownMenuItem(
+                          value: 'deadline',
+                          child: Text('Deadline'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'social',
+                          child: Text('Social'),
+                        ),
                         DropdownMenuItem(value: 'other', child: Text('Other')),
                       ],
                       onChanged: _isSaving
@@ -952,7 +1041,9 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                       onChanged: _isSaving
                           ? null
                           : (value) {
-                              if (value != null) setState(() => _status = value);
+                              if (value != null) {
+                                setState(() => _status = value);
+                              }
                             },
                     ),
                     DropdownButtonFormField<String>(
@@ -962,7 +1053,10 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                         border: OutlineInputBorder(),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 'public', child: Text('Public')),
+                        DropdownMenuItem(
+                          value: 'public',
+                          child: Text('Public'),
+                        ),
                         DropdownMenuItem(
                           value: 'members',
                           child: Text('Members Only'),
@@ -980,28 +1074,60 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                               }
                             },
                     ),
-                    DropdownButtonFormField<String>(
-                      initialValue: _relatedDocumentId,
-                      decoration: const InputDecoration(
-                        labelText: 'Related document',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: null,
-                          child: Text('No related document'),
-                        ),
-                        for (final document in widget.documents)
-                          DropdownMenuItem(
-                            value: document.id,
-                            child: Text(document.title),
-                          ),
-                      ],
-                      onChanged: _isSaving
-                          ? null
-                          : (value) => setState(() => _relatedDocumentId = value),
-                    ),
                   ],
+                ),
+                const SizedBox(height: 14),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Related documents (optional)',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (_relatedDocumentIds.isEmpty)
+                        const Text('No related documents selected'),
+                      for (final document in _documents.where(
+                        (document) => _relatedDocumentIds.contains(document.id),
+                      ))
+                        InputChip(
+                          label: Text(document.title),
+                          onDeleted: _isSaving
+                              ? null
+                              : () => setState(
+                                  () => _relatedDocumentIds.remove(document.id),
+                                ),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: _isSaving ? null : _chooseRelatedDocuments,
+                        icon: const Icon(Icons.attach_file),
+                        label: const Text('Select Documents'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _isSaving || _isLoadingDocuments
+                        ? null
+                        : _openDocuments,
+                    icon: _isLoadingDocuments
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.note_add_outlined),
+                    label: Text(
+                      _isLoadingDocuments
+                          ? 'Refreshing Documents...'
+                          : 'Add Document',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 18),
                 _SectionTitle('Date & Location'),
@@ -1014,21 +1140,38 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                     ),
                     _DateTimeField(
                       controller: _endAtController,
-                      label: 'End date/time',
+                      label: 'End date/time (optional)',
                       onPick: () => _pickDateTime(_endAtController),
                     ),
-                    TextFormField(
-                      controller: _timezoneController,
+                    DropdownButtonFormField<String>(
+                      initialValue: _timezone,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Timezone',
-                        hintText: 'America/New_York',
                         border: OutlineInputBorder(),
                       ),
+                      items: [
+                        for (final timezone in _timezoneChoices(_timezone))
+                          DropdownMenuItem(
+                            value: timezone,
+                            child: Text(
+                              timezone.replaceAll('_', ' '),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: _isSaving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => _timezone = value);
+                              }
+                            },
                     ),
                     TextFormField(
                       controller: _locationNameController,
                       decoration: const InputDecoration(
-                        labelText: 'Location name',
+                        labelText: 'Location name (optional)',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -1038,7 +1181,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                 TextFormField(
                   controller: _locationAddressController,
                   decoration: const InputDecoration(
-                    labelText: 'Location address',
+                    labelText: 'Location address (optional)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1047,18 +1190,18 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                   controller: _virtualUrlController,
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
-                    labelText: 'Virtual meeting link',
+                    labelText: 'Virtual meeting link (optional)',
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 18),
-                _SectionTitle('Agenda & RSVP'),
+                _SectionTitle('Agenda & Notes'),
                 TextFormField(
                   controller: _agendaController,
                   minLines: 3,
                   maxLines: 8,
                   decoration: const InputDecoration(
-                    labelText: 'Agenda',
+                    labelText: 'Agenda (optional)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1068,27 +1211,12 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                   minLines: 3,
                   maxLines: 8,
                   decoration: const InputDecoration(
-                    labelText: 'Internal notes',
+                    labelText: 'Event notes (optional)',
+                    helperText:
+                        'These notes may be included in event communications.',
                     border: OutlineInputBorder(),
                   ),
                 ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Track RSVP later'),
-                  subtitle: const Text(
-                    'This stores RSVP settings now. RSVP response tracking can be added later.',
-                  ),
-                  value: _requiresRsvp,
-                  onChanged: _isSaving
-                      ? null
-                      : (value) => setState(() => _requiresRsvp = value),
-                ),
-                if (_requiresRsvp)
-                  _DateTimeField(
-                    controller: _rsvpDeadlineController,
-                    label: 'RSVP deadline',
-                    onPick: () => _pickDateTime(_rsvpDeadlineController),
-                  ),
               ],
             ),
           ),
@@ -1135,8 +1263,8 @@ class _ClubEvent {
     required this.timezone,
     required this.requiresRsvp,
     required this.createdAt,
+    this.relatedDocuments = const [],
     this.relatedDocumentId,
-    this.relatedDocument,
     this.description,
     this.endAt,
     this.locationName,
@@ -1149,7 +1277,7 @@ class _ClubEvent {
 
   final String id;
   final String? relatedDocumentId;
-  final _RelatedDocument? relatedDocument;
+  final List<_RelatedDocument> relatedDocuments;
   final String title;
   final String? description;
   final String eventType;
@@ -1183,12 +1311,12 @@ class _ClubEvent {
 
   factory _ClubEvent.fromJson(
     Map<String, dynamic> json, {
-    _RelatedDocument? relatedDocument,
+    List<_RelatedDocument> relatedDocuments = const [],
   }) {
     return _ClubEvent(
       id: json['id'].toString(),
       relatedDocumentId: _nullableString(json['related_document_id']),
-      relatedDocument: relatedDocument,
+      relatedDocuments: relatedDocuments,
       title: _nullableString(json['title']) ?? 'Untitled Event',
       description: _nullableString(json['description']),
       eventType: _nullableString(json['event_type']) ?? 'meeting',
@@ -1261,8 +1389,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -1275,10 +1403,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.text,
-  });
+  const _DetailRow({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1374,9 +1499,9 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -1412,8 +1537,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1455,9 +1580,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -1529,8 +1654,8 @@ String _formatDateTime(DateTime value) {
   final hour = value.hour == 0
       ? 12
       : value.hour > 12
-          ? value.hour - 12
-          : value.hour;
+      ? value.hour - 12
+      : value.hour;
   final minute = value.minute.toString().padLeft(2, '0');
   final meridiem = value.hour >= 12 ? 'PM' : 'AM';
   return '$month/$day/${value.year} $hour:$minute $meridiem';
@@ -1548,4 +1673,119 @@ String _titleCase(String value) {
 
 bool _sameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+const _timezones = <String>[
+  'UTC',
+  'Pacific/Honolulu',
+  'America/Anchorage',
+  'America/Los_Angeles',
+  'America/Phoenix',
+  'America/Denver',
+  'America/Chicago',
+  'America/New_York',
+  'America/Halifax',
+  'America/St_Johns',
+  'America/Puerto_Rico',
+  'America/Mexico_City',
+  'America/Bogota',
+  'America/Lima',
+  'America/Caracas',
+  'America/Santiago',
+  'America/Sao_Paulo',
+  'America/Argentina/Buenos_Aires',
+  'Atlantic/Azores',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Athens',
+  'Europe/Helsinki',
+  'Europe/Moscow',
+  'Africa/Cairo',
+  'Africa/Johannesburg',
+  'Asia/Dubai',
+  'Asia/Karachi',
+  'Asia/Kolkata',
+  'Asia/Dhaka',
+  'Asia/Bangkok',
+  'Asia/Singapore',
+  'Asia/Hong_Kong',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Perth',
+  'Australia/Adelaide',
+  'Australia/Darwin',
+  'Australia/Brisbane',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+];
+
+List<String> _timezoneChoices(String selected) {
+  if (_timezones.contains(selected)) return _timezones;
+  return [selected, ..._timezones];
+}
+
+String _deviceTimezone() {
+  final now = DateTime.now();
+  final reportedName = now.timeZoneName.trim();
+
+  // Some platforms report an IANA identifier directly. Others, including many
+  // browsers, expose only an abbreviation, so use its current UTC offset.
+  if (reportedName.contains('/')) return reportedName;
+
+  const names = <String, String>{
+    'UTC': 'UTC',
+    'GMT': 'UTC',
+    'HST': 'Pacific/Honolulu',
+    'AKST': 'America/Anchorage',
+    'AKDT': 'America/Anchorage',
+    'PST': 'America/Los_Angeles',
+    'PDT': 'America/Los_Angeles',
+    'MST': 'America/Denver',
+    'MDT': 'America/Denver',
+    'CST': 'America/Chicago',
+    'CDT': 'America/Chicago',
+    'EST': 'America/New_York',
+    'EDT': 'America/New_York',
+    'EASTERN STANDARD TIME': 'America/New_York',
+    'EASTERN DAYLIGHT TIME': 'America/New_York',
+    'CENTRAL STANDARD TIME': 'America/Chicago',
+    'CENTRAL DAYLIGHT TIME': 'America/Chicago',
+    'MOUNTAIN STANDARD TIME': 'America/Denver',
+    'MOUNTAIN DAYLIGHT TIME': 'America/Denver',
+    'PACIFIC STANDARD TIME': 'America/Los_Angeles',
+    'PACIFIC DAYLIGHT TIME': 'America/Los_Angeles',
+  };
+  final namedTimezone = names[reportedName.toUpperCase()];
+  if (namedTimezone != null) return namedTimezone;
+
+  final offsetMinutes = now.timeZoneOffset.inMinutes;
+  const offsets = <int, String>{
+    -600: 'Pacific/Honolulu',
+    -540: 'America/Anchorage',
+    -480: 'America/Los_Angeles',
+    -420: 'America/Denver',
+    -360: 'America/Chicago',
+    -300: 'America/New_York',
+    -240: 'America/Halifax',
+    -210: 'America/St_Johns',
+    -180: 'America/Sao_Paulo',
+    -60: 'Atlantic/Azores',
+    0: 'UTC',
+    60: 'Europe/Paris',
+    120: 'Europe/Athens',
+    180: 'Europe/Moscow',
+    240: 'Asia/Dubai',
+    300: 'Asia/Karachi',
+    330: 'Asia/Kolkata',
+    360: 'Asia/Dhaka',
+    420: 'Asia/Bangkok',
+    480: 'Asia/Singapore',
+    540: 'Asia/Tokyo',
+    570: 'Australia/Adelaide',
+    600: 'Australia/Sydney',
+    720: 'Pacific/Auckland',
+  };
+  return offsets[offsetMinutes] ?? 'UTC';
 }
