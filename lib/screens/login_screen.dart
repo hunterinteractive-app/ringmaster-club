@@ -62,10 +62,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
 
     _logoScale = Tween<double>(begin: 0.9, end: 1).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeOutCubic,
-      ),
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
     );
 
     _logoFade = Tween<double>(begin: 0, end: 1).animate(
@@ -82,15 +79,13 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     );
 
-    _cardSlide = Tween<Offset>(
-      begin: const Offset(0, 0.06),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.35, 1, curve: Curves.easeOutCubic),
-      ),
-    );
+    _cardSlide = Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: const Interval(0.35, 1, curve: Curves.easeOutCubic),
+          ),
+        );
 
     _animationController.forward();
 
@@ -108,19 +103,17 @@ class _LoginScreenState extends State<LoginScreen>
       _goHome();
     });
   }
+
   void _goHome() {
     if (!mounted || _navigatingHome) return;
 
     _navigatingHome = true;
 
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(
-        builder: (_) => const HomeScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const HomeScreen()),
       (_) => false,
     );
   }
-
 
   @override
   void dispose() {
@@ -220,10 +213,7 @@ class _LoginScreenState extends State<LoginScreen>
           _ => OtpType.magiclink,
         };
 
-        await supabase.auth.verifyOTP(
-          tokenHash: tokenHash,
-          type: type,
-        );
+        await supabase.auth.verifyOTP(tokenHash: tokenHash, type: type);
       } else if (hasCode) {
         await supabase.auth.exchangeCodeForSession(code);
       }
@@ -286,10 +276,7 @@ class _LoginScreenState extends State<LoginScreen>
     });
 
     try {
-      await supabase.auth.signInWithOtp(
-        email: email,
-        shouldCreateUser: true,
-      );
+      await supabase.auth.signInWithOtp(email: email, shouldCreateUser: true);
 
       if (!mounted) return;
 
@@ -406,15 +393,7 @@ class _LoginScreenState extends State<LoginScreen>
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppColors.navyDark,
-              AppColors.navy,
-              AppColors.clubGreenLight,
-            ],
-          ),
+          gradient: AppColors.clubBackgroundGradient,
         ),
         child: SafeArea(
           child: Center(
@@ -429,9 +408,7 @@ class _LoginScreenState extends State<LoginScreen>
                       opacity: _logoFade,
                       child: ScaleTransition(
                         scale: _logoScale,
-                        child: _ClubBranding(
-                          onLogoTap: _handleLogoTap,
-                        ),
+                        child: _ClubBranding(onLogoTap: _handleLogoTap),
                       ),
                     ),
                     const SizedBox(height: AppSpacing.xl),
@@ -463,7 +440,9 @@ class _LoginScreenState extends State<LoginScreen>
                                         ? 'We sent a 6-digit code to ${_pendingEmail ?? ''}.'
                                         : 'Enter your email to receive a secure 6-digit code for membership, club tools, and account access.',
                                     textAlign: TextAlign.center,
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                   const SizedBox(height: AppSpacing.xl),
                                   if (!_awaitingCode) ...[
@@ -471,7 +450,9 @@ class _LoginScreenState extends State<LoginScreen>
                                       controller: _emailController,
                                       enabled: !_busy,
                                       keyboardType: TextInputType.emailAddress,
-                                      autofillHints: const [AutofillHints.email],
+                                      autofillHints: const [
+                                        AutofillHints.email,
+                                      ],
                                       textInputAction: TextInputAction.done,
                                       validator: _validateEmail,
                                       onFieldSubmitted: (_) {
@@ -486,20 +467,24 @@ class _LoginScreenState extends State<LoginScreen>
                                     SizedBox(
                                       height: 52,
                                       child: FilledButton.icon(
-                                        onPressed:
-                                            _busy ? null : () => _sendCode(),
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _sendCode(),
                                         icon: _busy
                                             ? const SizedBox(
                                                 width: 18,
                                                 height: 18,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: Colors.white,
-                                                ),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: AppColors.offWhite,
+                                                    ),
                                               )
                                             : const Icon(Icons.send_outlined),
                                         label: Text(
-                                          _busy ? 'Sending...' : 'Send login code',
+                                          _busy
+                                              ? 'Sending...'
+                                              : 'Send login code',
                                         ),
                                       ),
                                     ),
@@ -507,13 +492,17 @@ class _LoginScreenState extends State<LoginScreen>
                                     Text(
                                       'The code can only be used once and will expire after 20 minutes.',
                                       textAlign: TextAlign.center,
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
                                     ),
                                     const SizedBox(height: AppSpacing.md),
                                     Text(
                                       'By continuing, you agree to the RingMaster Club Terms of Service and Privacy Policy.',
                                       textAlign: TextAlign.center,
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
                                     ),
                                     const SizedBox(height: AppSpacing.xs),
                                     Wrap(
@@ -524,7 +513,8 @@ class _LoginScreenState extends State<LoginScreen>
                                           onPressed: () {
                                             Navigator.of(context).push(
                                               MaterialPageRoute<void>(
-                                                builder: (_) => const TermsScreen(),
+                                                builder: (_) =>
+                                                    const TermsScreen(),
                                               ),
                                             );
                                           },
@@ -534,7 +524,8 @@ class _LoginScreenState extends State<LoginScreen>
                                           onPressed: () {
                                             Navigator.of(context).push(
                                               MaterialPageRoute<void>(
-                                                builder: (_) => const PrivacyPolicyScreen(),
+                                                builder: (_) =>
+                                                    const PrivacyPolicyScreen(),
                                               ),
                                             );
                                           },
@@ -581,10 +572,11 @@ class _LoginScreenState extends State<LoginScreen>
                                             ? const SizedBox(
                                                 width: 18,
                                                 height: 18,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: Colors.white,
-                                                ),
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: AppColors.offWhite,
+                                                    ),
                                               )
                                             : const Icon(Icons.login),
                                         label: Text(
@@ -599,16 +591,15 @@ class _LoginScreenState extends State<LoginScreen>
                                       runSpacing: AppSpacing.sm,
                                       children: [
                                         TextButton(
-                                          onPressed:
-                                              _busy ? null : _changeEmail,
+                                          onPressed: _busy
+                                              ? null
+                                              : _changeEmail,
                                           child: const Text('Change Email'),
                                         ),
                                         TextButton(
-                                          onPressed: _busy ||
-                                                  _resendSeconds > 0
+                                          onPressed: _busy || _resendSeconds > 0
                                               ? null
-                                              : () =>
-                                                  _sendCode(isResend: true),
+                                              : () => _sendCode(isResend: true),
                                           child: Text(
                                             _resendSeconds > 0
                                                 ? 'Resend in $_resendSeconds s'
@@ -621,7 +612,9 @@ class _LoginScreenState extends State<LoginScreen>
                                   if (_message != null) ...[
                                     const SizedBox(height: AppSpacing.lg),
                                     Container(
-                                      padding: const EdgeInsets.all(AppSpacing.md),
+                                      padding: const EdgeInsets.all(
+                                        AppSpacing.md,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: _message!.startsWith('Error:')
                                             ? AppColors.dangerBg
@@ -660,9 +653,7 @@ class _LoginScreenState extends State<LoginScreen>
 }
 
 class _ClubBranding extends StatelessWidget {
-  const _ClubBranding({
-    required this.onLogoTap,
-  });
+  const _ClubBranding({required this.onLogoTap});
 
   final VoidCallback onLogoTap;
 
@@ -678,9 +669,7 @@ class _ClubBranding extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(AppRadius.lg),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.12),
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
             ),
             child: Image.asset(
               'assets/images/ringmaster_club_logo.png',

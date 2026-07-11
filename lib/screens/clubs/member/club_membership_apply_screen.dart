@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../services/clubs/club_communications_service.dart';
 import '../../../services/clubs/club_service.dart';
 
 class ClubMembershipApplyScreen extends StatefulWidget {
@@ -19,6 +20,7 @@ class ClubMembershipApplyScreen extends StatefulWidget {
 class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   final _formKey = GlobalKey<FormState>();
   final _clubService = ClubService();
+  final _communicationsService = ClubCommunicationsService();
   final _supabase = Supabase.instance.client;
 
   final _firstNameController = TextEditingController();
@@ -39,6 +41,14 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   bool _isLoading = true;
   bool _isSubmitting = false;
   bool _acceptsOnlinePayments = false;
+  bool _allowCheckPayments = false;
+  String _paymentMethod = 'online';
+  String? _treasurerName;
+  String? _treasurerAddressLine1;
+  String? _treasurerAddressLine2;
+  String? _treasurerCity;
+  String? _treasurerState;
+  String? _treasurerZip;
   String? _errorMessage;
   String? _successMessage;
   _MembershipTypeOption? _selectedType;
@@ -111,10 +121,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   }
 
   String _buildAutoShowingName() {
-    return _joinNameParts(
-      _firstNameController.text,
-      _lastNameController.text,
-    );
+    return _joinNameParts(_firstNameController.text, _lastNameController.text);
   }
 
   Future<void> _prefillFromSavedAccount() async {
@@ -287,7 +294,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
         _setShowingNameProgrammatically(_buildAutoShowingName());
       }
 
-      _emailController.text = exhibitor['email']?.toString() ??
+      _emailController.text =
+          exhibitor['email']?.toString() ??
           _supabase.auth.currentUser?.email ??
           '';
       _phoneController.text = exhibitor['phone']?.toString() ?? '';
@@ -325,7 +333,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       // Keep shared contact/address defaults from the signed-in account.
       final selected = _pickBestExhibitorForPrefill(_linkedExhibitors);
       if (selected != null) {
-        _emailController.text = selected['email']?.toString() ??
+        _emailController.text =
+            selected['email']?.toString() ??
             _supabase.auth.currentUser?.email ??
             '';
         _addressLine1Controller.text =
@@ -402,18 +411,88 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   String? _combinedNotesForSubmission() {
     final notes = _notesController.text.trim();
     final additionalPeople = _additionalLinkedPeopleSummary();
-
-    if (additionalPeople.isEmpty) return _emptyToNull(notes);
+    final paymentNotes = _paymentNotesForSubmission();
 
     final buffer = StringBuffer();
     if (notes.isNotEmpty) {
       buffer.writeln(notes);
-      buffer.writeln();
     }
-    buffer.writeln('Additional linked people included on this application:');
-    buffer.write(additionalPeople);
 
-    return buffer.toString().trim();
+    if (additionalPeople.isNotEmpty) {
+      if (buffer.isNotEmpty) buffer.writeln();
+      buffer.writeln('Additional linked people included on this application:');
+      buffer.write(additionalPeople);
+    }
+
+    if (paymentNotes.isNotEmpty) {
+      if (buffer.isNotEmpty) buffer.writeln();
+      buffer.write(paymentNotes);
+    }
+
+    return _emptyToNull(buffer.toString());
+  }
+
+  String _paymentNotesForSubmission() {
+    if (_checkoutAmountCents <= 0) return '';
+
+    final amount = _moneyLabel(
+      _checkoutAmountCents,
+      _selectedType?.currency ?? 'USD',
+    );
+
+    if (_isCheckPaymentSelected) {
+      final mailingLabel = _treasurerMailingLabel;
+      final buffer = StringBuffer()
+        ..writeln('Payment method: Mailed check')
+        ..writeln('Payment status: Pending check')
+        ..writeln('Amount due: $amount');
+
+      if (mailingLabel.isNotEmpty) {
+        buffer.writeln('Mail check to:');
+        buffer.write(mailingLabel);
+      }
+
+      return buffer.toString().trim();
+    }
+
+    if (_acceptsOnlinePayments) {
+      return 'Payment method: Online payment\nPayment status: Pending Stripe payment\nAmount due: $amount';
+    }
+
+    return 'Payment method: Club handled payment\nPayment status: Pending club payment\nAmount due: $amount';
+  }
+
+  Map<String, dynamic> _applicationDetailsJson() {
+    final selectedType = _selectedType;
+    final checkoutAmountCents = _checkoutAmountCents;
+    final paymentMethod = checkoutAmountCents <= 0 ? 'waived' : _paymentMethod;
+
+    return {
+      'membership_type': {
+        'id': selectedType?.id,
+        'name': selectedType?.name,
+        'scope': selectedType?.membershipScope,
+        'currency': selectedType?.currency ?? 'USD',
+        'amount_cents': selectedType?.amountCents ?? 0,
+        'checkout_amount_cents': checkoutAmountCents,
+      },
+      'payment_method': paymentMethod,
+      'check_payment': {
+        'selected': _isCheckPaymentSelected,
+        'status': _isCheckPaymentSelected ? 'pending_check' : null,
+        'payable_to': _treasurerName,
+        'mailing_address': _treasurerMailingLabel,
+      },
+      'auto_renew': {
+        'selected': _autoRenewEnabled && (selectedType?.allowAutoRenew == true),
+        'available': selectedType?.allowAutoRenew == true,
+      },
+      'linked_people': {
+        'primary_exhibitor_id': _selectedLinkedExhibitor?['id']?.toString(),
+        'additional_exhibitor_ids': _selectedAdditionalExhibitorIds.toList(),
+        'additional_people_summary': _additionalLinkedPeopleSummary(),
+      },
+    };
   }
 
   void _setShowingNameProgrammatically(String value) {
@@ -527,7 +606,11 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
     try {
       final clubResponse = await _supabase
           .from('clubs')
-          .select('accepts_member_online_payments')
+          .select(
+            'accepts_member_online_payments,allow_membership_check_payments,'
+            'treasurer_name,treasurer_address_line1,treasurer_address_line2,'
+            'treasurer_city,treasurer_state,treasurer_zip',
+          )
           .eq('id', widget.club.clubId)
           .single();
 
@@ -554,9 +637,20 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       setState(() {
         _acceptsOnlinePayments =
             clubResponse['accepts_member_online_payments'] == true;
+        _allowCheckPayments =
+            clubResponse['allow_membership_check_payments'] == true;
+        _treasurerName = clubResponse['treasurer_name']?.toString();
+        _treasurerAddressLine1 = clubResponse['treasurer_address_line1']
+            ?.toString();
+        _treasurerAddressLine2 = clubResponse['treasurer_address_line2']
+            ?.toString();
+        _treasurerCity = clubResponse['treasurer_city']?.toString();
+        _treasurerState = clubResponse['treasurer_state']?.toString();
+        _treasurerZip = clubResponse['treasurer_zip']?.toString();
         _membershipTypes = types;
         _selectedType = types.isEmpty ? null : types.first;
         _autoRenewEnabled = _selectedType?.allowAutoRenew == true;
+        _paymentMethod = _acceptsOnlinePayments ? 'online' : 'check';
         _isLoading = false;
       });
     } catch (error) {
@@ -595,16 +689,19 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
 
     try {
       final user = _supabase.auth.currentUser;
-      final autoRenew = _autoRenewEnabled && selectedType.allowAutoRenew;
       final now = DateTime.now().toIso8601String();
       final checkoutAmountCents = _checkoutAmountCents;
 
-      final membershipResponse = await _supabase
-          .from('club_memberships')
+      final applicationResponse = await _supabase
+          .from('club_membership_applications')
           .insert({
             'club_id': widget.club.clubId,
             'user_id': user?.id,
             'membership_type_id': selectedType.id,
+            'application_type': 'new_membership',
+            'status': 'pending',
+            'payment_status': checkoutAmountCents > 0 ? 'unpaid' : 'waived',
+            'submitted_at': now,
             'first_name': _firstNameController.text.trim(),
             'last_name': _lastNameController.text.trim(),
             'showing_name': _emptyToNull(_showingNameController.text),
@@ -620,26 +717,59 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
             'country': _countryController.text.trim().isEmpty
                 ? 'US'
                 : _countryController.text.trim(),
-            'status': 'pending',
-            'source': 'ringmaster',
-            'notes': _combinedNotesForSubmission(),
-            'auto_renew': autoRenew,
-            'auto_renew_enabled': autoRenew,
-            'auto_renew_opted_in_at': autoRenew ? now : null,
+            'applicant_message': _combinedNotesForSubmission(),
+            'application_details': _applicationDetailsJson(),
           })
           .select('id')
           .single();
 
-      final membershipId = membershipResponse['id']?.toString();
-      if (membershipId == null || membershipId.isEmpty) {
+      final applicationId = applicationResponse['id']?.toString();
+      if (applicationId == null || applicationId.isEmpty) {
         throw Exception('Membership application was created without an ID.');
       }
 
-      if (checkoutAmountCents > 0 && _acceptsOnlinePayments) {
+      await _communicationsService.createWorkflowCommunication(
+        clubId: widget.club.clubId,
+        clubName: widget.club.clubName,
+        templateKey: 'membership_application_submitted',
+        preferEmailWhenAvailable: true,
+        relatedType: 'membership_application',
+        relatedId: applicationId,
+        recipientUserId: user?.id,
+        recipientEmail: _emptyToNull(_emailController.text),
+        recipientName: _joinNameParts(
+          _firstNameController.text,
+          _lastNameController.text,
+        ),
+        audienceType: 'membership_application',
+        variables: {
+          'membership_type': selectedType.name,
+          'amount_due': _moneyLabel(checkoutAmountCents, selectedType.currency),
+          'amount_paid': checkoutAmountCents <= 0
+              ? _moneyLabel(0, selectedType.currency)
+              : '',
+          'payment_method': _titleCase(
+            checkoutAmountCents <= 0 ? 'waived' : _paymentMethod,
+          ),
+          'payment_status': checkoutAmountCents <= 0 ? 'Waived' : 'Unpaid',
+          'staff_message': '',
+        },
+        createdBy: user?.id,
+      );
+
+      if (checkoutAmountCents > 0 && _isCheckPaymentSelected) {
+        if (!mounted) return;
+        setState(() {
+          _successMessage =
+              'Your application was submitted. Mail your check to complete payment.';
+        });
+        await _showCheckPaymentDialog();
+        _returnToMemberHomeAfterCheckSubmit();
+      } else if (checkoutAmountCents > 0 && _acceptsOnlinePayments) {
         await _clubService.startMemberCheckout(
           clubId: widget.club.clubId,
           sourceType: 'membership_due',
-          sourceId: membershipId,
+          sourceId: applicationId,
           amountCents: checkoutAmountCents,
           description: '${selectedType.name} membership application',
         );
@@ -653,7 +783,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
         if (!mounted) return;
         setState(() {
           _successMessage =
-              'Your application was submitted. This club is not currently accepting online membership payments, so payment will be handled by the club.';
+              'Your application was submitted. Payment will be handled by the club.';
         });
       } else {
         if (!mounted) return;
@@ -673,6 +803,79 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
         });
       }
     }
+  }
+
+  void _returnToMemberHomeAfterCheckSubmit() {
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  Future<void> _showCheckPaymentDialog() async {
+    if (!mounted) return;
+
+    final mailingLabel = _treasurerMailingLabel;
+    final selectedType = _selectedType;
+    final amountLabel = _moneyLabel(
+      _checkoutAmountCents,
+      selectedType?.currency ?? 'USD',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mail Check Payment'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Please mail your check for $amountLabel to:'),
+            const SizedBox(height: 12),
+            if (mailingLabel.isNotEmpty)
+              SelectableText(
+                mailingLabel,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              )
+            else
+              const Text(
+                'The club treasurer will provide mailing instructions for this payment.',
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool get _canChoosePaymentMethod {
+    return _checkoutAmountCents > 0 &&
+        _acceptsOnlinePayments &&
+        _allowCheckPayments;
+  }
+
+  bool get _isCheckPaymentSelected {
+    return _checkoutAmountCents > 0 &&
+        _allowCheckPayments &&
+        (!_acceptsOnlinePayments || _paymentMethod == 'check');
+  }
+
+  String get _treasurerMailingLabel {
+    final lines = <String>[
+      _treasurerName?.trim() ?? '',
+      _treasurerAddressLine1?.trim() ?? '',
+      _treasurerAddressLine2?.trim() ?? '',
+      [
+        _treasurerCity?.trim() ?? '',
+        _treasurerState?.trim() ?? '',
+        _treasurerZip?.trim() ?? '',
+      ].where((part) => part.isNotEmpty).join(', '),
+    ].where((line) => line.isNotEmpty).toList();
+
+    return lines.join('\n');
   }
 
   String? _selectedTypeAgeError(_MembershipTypeOption selectedType) {
@@ -698,7 +901,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
 
   int _ageOnDate(DateTime birthDate, DateTime onDate) {
     var age = onDate.year - birthDate.year;
-    final hasHadBirthdayThisYear = onDate.month > birthDate.month ||
+    final hasHadBirthdayThisYear =
+        onDate.month > birthDate.month ||
         (onDate.month == birthDate.month && onDate.day >= birthDate.day);
 
     if (!hasHadBirthdayThisYear) age--;
@@ -761,7 +965,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
 
     final amount = cents / 100;
     final symbol = currency.toUpperCase() == 'USD' ? r'$' : '';
-    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'.trim();
+    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'
+        .trim();
   }
 
   String? get _familyPriceMessage {
@@ -782,9 +987,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Apply for Membership'),
-      ),
+      appBar: AppBar(title: const Text('Apply for Membership')),
       body: _buildBody(context),
     );
   }
@@ -823,9 +1026,9 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
           children: [
             Text(
               widget.club.clubName,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
@@ -852,7 +1055,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
             if (_prefilledFromSavedAccount) ...[
               _InlineMessage(
                 icon: Icons.person_search_outlined,
-                message: _prefillSourceLabel == null ||
+                message:
+                    _prefillSourceLabel == null ||
                         _prefillSourceLabel!.trim().isEmpty
                     ? 'We prefilled this form from your saved RingMaster account information.'
                     : 'We prefilled this form from your saved RingMaster account information for $_prefillSourceLabel.',
@@ -915,25 +1119,24 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                           ? 'Optional: include more linked names for couple or family memberships.'
                           : '${_selectedAdditionalExhibitorIds.length} additional saved name(s) selected.',
                     ),
-                    children: _availableAdditionalLinkedExhibitors.map(
-                      (exhibitor) {
-                        final id = exhibitor['id']?.toString();
-                        final selected = id != null &&
-                            _selectedAdditionalExhibitorIds.contains(id);
+                    children: _availableAdditionalLinkedExhibitors.map((
+                      exhibitor,
+                    ) {
+                      final id = exhibitor['id']?.toString();
+                      final selected =
+                          id != null &&
+                          _selectedAdditionalExhibitorIds.contains(id);
 
-                        return CheckboxListTile(
-                          value: selected,
-                          onChanged: (value) => _toggleAdditionalLinkedExhibitor(
-                            exhibitor,
-                            value == true,
-                          ),
-                          title: Text(_linkedExhibitorLabel(exhibitor)),
-                          subtitle: Text(
-                            _bestShowingNameForExhibitor(exhibitor),
-                          ),
-                        );
-                      },
-                    ).toList(),
+                      return CheckboxListTile(
+                        value: selected,
+                        onChanged: (value) => _toggleAdditionalLinkedExhibitor(
+                          exhibitor,
+                          value == true,
+                        ),
+                        title: Text(_linkedExhibitorLabel(exhibitor)),
+                        subtitle: Text(_bestShowingNameForExhibitor(exhibitor)),
+                      );
+                    }).toList(),
                   ),
                 ),
                 const SizedBox(height: 36),
@@ -1121,7 +1324,20 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                 ),
               ),
             ],
-            if (_selectedType != null &&
+            if (_selectedType != null && _canChoosePaymentMethod) ...[
+              const SizedBox(height: 16),
+              _MembershipPaymentMethodCard(
+                selectedMethod: _paymentMethod,
+                amountLabel: _moneyLabel(
+                  _checkoutAmountCents,
+                  _selectedType?.currency ?? 'USD',
+                ),
+                mailingLabel: _treasurerMailingLabel,
+                onChanged: (value) {
+                  setState(() => _paymentMethod = value);
+                },
+              ),
+            ] else if (_selectedType != null &&
                 _checkoutAmountCents > 0 &&
                 _acceptsOnlinePayments) ...[
               const SizedBox(height: 16),
@@ -1129,6 +1345,17 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                 icon: Icons.lock_outline,
                 message:
                     'You will be redirected to Stripe Checkout to complete payment securely.',
+                isError: false,
+              ),
+            ] else if (_selectedType != null &&
+                _checkoutAmountCents > 0 &&
+                _allowCheckPayments) ...[
+              const SizedBox(height: 16),
+              _InlineMessage(
+                icon: Icons.payments_outlined,
+                message: _treasurerMailingLabel.isEmpty
+                    ? 'Mail a check to complete payment. The club treasurer will provide mailing instructions.'
+                    : 'Mail a check to complete payment. Make payable to and mail to:\n$_treasurerMailingLabel',
                 isError: false,
               ),
             ],
@@ -1182,8 +1409,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                     Text(
                       option.name,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     if (option.description.trim().isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -1201,8 +1428,14 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                       const Text('Requires club approval'),
                     if (option.requireArbaNumber)
                       const Text('ARBA number required'),
-                    if (!_acceptsOnlinePayments && option.amountCents > 0)
+                    if (!_acceptsOnlinePayments &&
+                        !_allowCheckPayments &&
+                        option.amountCents > 0)
                       const Text('Online payment is not currently enabled.'),
+                    if (!_acceptsOnlinePayments &&
+                        _allowCheckPayments &&
+                        option.amountCents > 0)
+                      const Text('This club accepts mailed checks.'),
                   ],
                 ),
               ),
@@ -1220,6 +1453,10 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   String get _submitButtonLabel {
     final selectedType = _selectedType;
     if (selectedType == null) return 'Submit Application';
+
+    if (_checkoutAmountCents > 0 && _isCheckPaymentSelected) {
+      return 'Submit and Mail Check ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
+    }
 
     if (_checkoutAmountCents > 0 && _acceptsOnlinePayments) {
       return 'Submit and Pay ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
@@ -1358,9 +1595,9 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
     );
   }
 }
@@ -1381,7 +1618,9 @@ class _InlineMessage extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Material(
-      color: isError ? colorScheme.errorContainer : colorScheme.primaryContainer,
+      color: isError
+          ? colorScheme.errorContainer
+          : colorScheme.primaryContainer,
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -1429,8 +1668,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1438,6 +1677,142 @@ class _MessageState extends StatelessWidget {
               FilledButton(onPressed: onAction, child: Text(actionLabel)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MembershipPaymentMethodCard extends StatelessWidget {
+  const _MembershipPaymentMethodCard({
+    required this.selectedMethod,
+    required this.amountLabel,
+    required this.mailingLabel,
+    required this.onChanged,
+  });
+
+  final String selectedMethod;
+  final String amountLabel;
+  final String mailingLabel;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Payment Method',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 4),
+            Text('Amount due: $amountLabel'),
+            const SizedBox(height: 12),
+            _MembershipPaymentMethodOption(
+              value: 'online',
+              groupValue: selectedMethod,
+              title: 'Pay online',
+              subtitle: 'Pay securely with Stripe Checkout.',
+              icon: Icons.lock_outline,
+              onChanged: onChanged,
+            ),
+            const SizedBox(height: 8),
+            _MembershipPaymentMethodOption(
+              value: 'check',
+              groupValue: selectedMethod,
+              title: 'Mail a check',
+              subtitle: mailingLabel.isEmpty
+                  ? 'Submit now and get mailing instructions from the club treasurer.'
+                  : 'Submit now and mail payment to the treasurer address.',
+              icon: Icons.payments_outlined,
+              onChanged: onChanged,
+            ),
+            if (selectedMethod == 'check' && mailingLabel.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SelectableText(mailingLabel),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MembershipPaymentMethodOption extends StatelessWidget {
+  const _MembershipPaymentMethodOption({
+    required this.value,
+    required this.groupValue,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onChanged,
+  });
+
+  final String value;
+  final String groupValue;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value == groupValue;
+    final scheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => onChanged(value),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: selected ? scheme.primary : null),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(subtitle),
+                ],
+              ),
+            ),
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selected ? scheme.primary : null,
+            ),
+          ],
         ),
       ),
     );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'help_report_button.dart';
 import 'help_report_dialog.dart';
+import '../theme/app_theme.dart';
 
 class RingMasterPageShell extends StatelessWidget {
   final String title;
@@ -63,14 +64,14 @@ class RingMasterPageShell extends StatelessWidget {
     final isMobile = screenWidth < 700;
     final isTablet = screenWidth >= 700 && screenWidth < 1100;
 
-    final topColor = headerColor ?? const Color(0xFF11285A);
-    final pageBg = backgroundColor ?? const Color(0xFFF4F6FB);
+    final topColor = headerColor ?? AppColors.topBanner;
+    final pageBg = backgroundColor ?? Colors.transparent;
 
     final horizontalPadding = isMobile
         ? 16.0
         : isTablet
-            ? 20.0
-            : 24.0;
+        ? 20.0
+        : 24.0;
 
     final topPadding = isMobile ? 12.0 : 16.0;
     final bottomRadius = isMobile ? 24.0 : 28.0;
@@ -78,21 +79,21 @@ class RingMasterPageShell extends StatelessWidget {
     final logoSize = isMobile
         ? 48.0
         : isTablet
-            ? 58.0
-            : 64.0;
+        ? 58.0
+        : 64.0;
 
     // Mobile header size
     final titleSize = isMobile
         ? 24.0
         : isTablet
-            ? 34.0
-            : 38.0;
+        ? 34.0
+        : 38.0;
 
     final subtitleSize = isMobile
         ? 15.0
         : isTablet
-            ? 17.0
-            : 18.0;
+        ? 17.0
+        : 18.0;
 
     final iconSize = isMobile ? 22.0 : 24.0;
 
@@ -100,14 +101,8 @@ class RingMasterPageShell extends StatelessWidget {
         leading != null || (showBackButton && _canPop(context));
 
     final resolvedBody = useScrollView
-        ? SingleChildScrollView(
-            padding: bodyPadding,
-            child: body,
-          )
-        : Padding(
-            padding: bodyPadding,
-            child: body,
-          );
+        ? SingleChildScrollView(padding: bodyPadding, child: body)
+        : Padding(padding: bodyPadding, child: body);
 
     final resolvedActions = <Widget>[
       if (showHelpButton)
@@ -130,7 +125,7 @@ class RingMasterPageShell extends StatelessWidget {
     ];
 
     return Scaffold(
-      backgroundColor: topColor,
+      backgroundColor: Colors.transparent,
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
       body: SafeArea(
@@ -188,10 +183,7 @@ class RingMasterPageShell extends StatelessWidget {
                   borderRadius: BorderRadius.vertical(
                     top: Radius.circular(bottomRadius),
                   ),
-                  child: Material(
-                    color: pageBg,
-                    child: resolvedBody,
-                  ),
+                  child: Material(color: pageBg, child: resolvedBody),
                 ),
               ),
             ),
@@ -244,18 +236,22 @@ class _MobileHeader extends StatelessWidget {
             if (showBack)
               Padding(
                 padding: const EdgeInsets.only(right: 8, top: 2),
-                child: leading ??
+                child:
+                    leading ??
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      constraints:
-                          const BoxConstraints(minWidth: 40, minHeight: 40),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                       padding: EdgeInsets.zero,
                       icon: Icon(
                         Icons.arrow_back,
-                        color: Colors.white,
+                        color: AppColors.offWhite,
                         size: iconSize,
                       ),
-                      onPressed: onBack ?? () => Navigator.of(context).maybePop(),
+                      onPressed:
+                          onBack ?? () => Navigator.of(context).maybePop(),
                     ),
               ),
             if (canShowLogo)
@@ -264,10 +260,7 @@ class _MobileHeader extends StatelessWidget {
                 child: SizedBox(
                   width: logoSize,
                   height: logoSize,
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: logo,
-                  ),
+                  child: FittedBox(fit: BoxFit.contain, child: logo),
                 ),
               ),
             Expanded(
@@ -281,7 +274,7 @@ class _MobileHeader extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white,
+                        color: AppColors.offWhite,
                         fontSize: titleSize,
                         fontWeight: FontWeight.w700,
                         height: 1.0,
@@ -294,7 +287,7 @@ class _MobileHeader extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: .9),
+                          color: AppColors.offWhite.withValues(alpha: .9),
                           fontSize: subtitleSize,
                           fontWeight: FontWeight.w400,
                           height: 1.1,
@@ -313,11 +306,7 @@ class _MobileHeader extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: actions
-                .map(
-                  (action) => _HeaderActionContainer(
-                    child: action,
-                  ),
-                )
+                .map((action) => _HeaderActionContainer(child: action))
                 .toList(),
           ),
         ],
@@ -362,11 +351,12 @@ class _WideHeader extends StatelessWidget {
         if (showBack)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: leading ??
+            child:
+                leading ??
                 IconButton(
                   icon: Icon(
                     Icons.arrow_back,
-                    color: Colors.white,
+                    color: AppColors.offWhite,
                     size: iconSize,
                   ),
                   onPressed: onBack ?? () => Navigator.of(context).maybePop(),
@@ -378,10 +368,7 @@ class _WideHeader extends StatelessWidget {
             child: SizedBox(
               width: logoSize,
               height: logoSize,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: logo,
-              ),
+              child: FittedBox(fit: BoxFit.contain, child: logo),
             ),
           ),
         Expanded(
@@ -394,7 +381,7 @@ class _WideHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: AppColors.offWhite,
                   fontSize: titleSize,
                   fontWeight: FontWeight.w700,
                   height: 1.0,
@@ -407,7 +394,7 @@ class _WideHeader extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: .9),
+                    color: AppColors.offWhite.withValues(alpha: .9),
                     fontSize: subtitleSize,
                   ),
                 ),
@@ -421,11 +408,7 @@ class _WideHeader extends StatelessWidget {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: actions
-                .map(
-                  (action) => _HeaderActionContainer(
-                    child: action,
-                  ),
-                )
+                .map((action) => _HeaderActionContainer(child: action))
                 .toList(),
           ),
       ],
@@ -436,16 +419,14 @@ class _WideHeader extends StatelessWidget {
 class _HeaderActionContainer extends StatelessWidget {
   final Widget child;
 
-  const _HeaderActionContainer({
-    required this.child,
-  });
+  const _HeaderActionContainer({required this.child});
 
   @override
   Widget build(BuildContext context) {
     return IconTheme(
-      data: const IconThemeData(color: Colors.white),
+      data: const IconThemeData(color: AppColors.offWhite),
       child: DefaultTextStyle(
-        style: const TextStyle(color: Colors.white),
+        style: const TextStyle(color: AppColors.offWhite),
         child: child,
       ),
     );

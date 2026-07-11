@@ -6,16 +6,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/clubs/club_summary.dart';
 
 class MembershipTypesScreen extends StatefulWidget {
-  const MembershipTypesScreen({
-    super.key,
-    required this.club,
-  });
+  const MembershipTypesScreen({super.key, required this.club});
 
   final ClubSummary club;
 
   @override
-  State<MembershipTypesScreen> createState() =>
-      _MembershipTypesScreenState();
+  State<MembershipTypesScreen> createState() => _MembershipTypesScreenState();
 }
 
 class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
@@ -24,6 +20,8 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
   bool _isLoading = true;
   bool _showArchived = false;
   bool _membershipManagementAddonEnabled = false;
+  bool _allowMembershipCheckPayments = false;
+  bool _isSavingPaymentSettings = false;
   String? _errorMessage;
   List<_MembershipType> _types = const [];
 
@@ -47,7 +45,9 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
     try {
       final clubRow = await _supabase
           .from('clubs')
-          .select('membership_management_addon_enabled')
+          .select(
+            'membership_management_addon_enabled,allow_membership_check_payments',
+          )
           .eq('id', widget.club.clubId)
           .single();
 
@@ -64,9 +64,9 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
 
       final parsed = (rows as List)
           .whereType<Map>()
-          .map((row) => _MembershipType.fromJson(
-                Map<String, dynamic>.from(row),
-              ))
+          .map(
+            (row) => _MembershipType.fromJson(Map<String, dynamic>.from(row)),
+          )
           .toList();
 
       if (!mounted) return;
@@ -74,6 +74,8 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
       setState(() {
         _membershipManagementAddonEnabled =
             clubRow['membership_management_addon_enabled'] == true;
+        _allowMembershipCheckPayments =
+            clubRow['allow_membership_check_payments'] == true;
         _types = parsed;
         _isLoading = false;
       });
@@ -128,10 +130,38 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unable to update membership type: $error'),
-        ),
+        SnackBar(content: Text('Unable to update membership type: $error')),
       );
+    }
+  }
+
+  Future<void> _setAllowMembershipCheckPayments(bool value) async {
+    if (_isSavingPaymentSettings) return;
+
+    final previousValue = _allowMembershipCheckPayments;
+
+    setState(() {
+      _allowMembershipCheckPayments = value;
+      _isSavingPaymentSettings = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _supabase
+          .from('clubs')
+          .update({'allow_membership_check_payments': value})
+          .eq('id', widget.club.clubId);
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _allowMembershipCheckPayments = previousValue;
+        _errorMessage = 'Unable to update membership payment settings: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingPaymentSettings = false);
+      }
     }
   }
 
@@ -175,17 +205,6 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
       );
     }
 
-    if (visibleTypes.isEmpty && _types.isEmpty) {
-      return _MessageState(
-        icon: Icons.workspace_premium_outlined,
-        title: 'No membership types yet',
-        message:
-            'Create the membership options this club will offer to members.',
-        actionLabel: 'Add Membership Type',
-        onAction: () => _openEditor(),
-      );
-    }
-
     return RefreshIndicator(
       onRefresh: _loadTypes,
       child: ListView(
@@ -205,9 +224,9 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
           ],
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -216,8 +235,13 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
           ),
           const SizedBox(height: 12),
           _BaseMembershipTypesAccessCard(
-            membershipManagementAddonEnabled:
-                _membershipManagementAddonEnabled,
+            membershipManagementAddonEnabled: _membershipManagementAddonEnabled,
+          ),
+          const SizedBox(height: 14),
+          _MembershipPaymentSettingsCard(
+            allowCheckPayments: _allowMembershipCheckPayments,
+            isSaving: _isSavingPaymentSettings,
+            onAllowCheckPaymentsChanged: _setAllowMembershipCheckPayments,
           ),
           if (archivedCount > 0) ...[
             const SizedBox(height: 14),
@@ -239,9 +263,12 @@ class _MembershipTypesScreenState extends State<MembershipTypesScreen> {
           if (visibleTypes.isEmpty)
             _MessageCard(
               icon: Icons.inventory_2_outlined,
-              title: 'No active membership types',
-              message:
-                  'All membership types are archived. Turn on Show archived membership types to restore one, or add a new membership type.',
+              title: _types.isEmpty
+                  ? 'No membership types yet'
+                  : 'No active membership types',
+              message: _types.isEmpty
+                  ? 'Create the membership options this club will offer to members.'
+                  : 'All membership types are archived. Turn on Show archived membership types to restore one, or add a new membership type.',
               actionLabel: 'Add Membership Type',
               onAction: () => _openEditor(),
             )
@@ -306,8 +333,8 @@ class _BaseMembershipTypesAccessCard extends StatelessWidget {
                   Text(
                     'Included with Base Club Tools',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
@@ -354,12 +381,85 @@ class _MembershipFeatureChip extends StatelessWidget {
         size: 18,
       ),
       label: Text(label),
-      backgroundColor:
-          enabled ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-      side: BorderSide(
-        color: enabled ? scheme.primary : scheme.outlineVariant,
-      ),
+      backgroundColor: enabled
+          ? scheme.primaryContainer
+          : scheme.surfaceContainerHighest,
+      side: BorderSide(color: enabled ? scheme.primary : scheme.outlineVariant),
       visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _MembershipPaymentSettingsCard extends StatelessWidget {
+  const _MembershipPaymentSettingsCard({
+    required this.allowCheckPayments,
+    required this.isSaving,
+    required this.onAllowCheckPaymentsChanged,
+  });
+
+  final bool allowCheckPayments;
+  final bool isSaving;
+  final ValueChanged<bool> onAllowCheckPaymentsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  backgroundColor: scheme.primaryContainer,
+                  foregroundColor: scheme.onPrimaryContainer,
+                  child: const Icon(Icons.payments_outlined),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Membership Payment Options',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Control whether applicants can choose to mail a check instead of paying online for these membership types.',
+                      ),
+                    ],
+                  ),
+                ),
+                if (isSaving)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 12, top: 4),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Allow mailed checks'),
+              subtitle: const Text(
+                'When enabled, applicants can submit their membership request and mail payment to the treasurer address saved in Club Settings.',
+              ),
+              value: allowCheckPayments,
+              onChanged: isSaving ? null : onAllowCheckPaymentsChanged,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -390,9 +490,9 @@ class _MessageCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -424,7 +524,9 @@ class _MembershipTypeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final inactiveBackground = colorScheme.errorContainer.withAlpha((0.45 * 255).round());
+    final inactiveBackground = colorScheme.errorContainer.withAlpha(
+      (0.45 * 255).round(),
+    );
     final inactiveBorder = colorScheme.error.withAlpha((0.55 * 255).round());
 
     return Card(
@@ -469,7 +571,8 @@ class _MembershipTypeCard extends StatelessWidget {
                         children: [
                           Text(
                             'ARCHIVED',
-                            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
                                   color: colorScheme.onErrorContainer,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.8,
@@ -478,9 +581,8 @@ class _MembershipTypeCard extends StatelessWidget {
                           const SizedBox(height: 2),
                           Text(
                             'This membership type is hidden from active membership options.',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onErrorContainer,
-                                ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: colorScheme.onErrorContainer),
                           ),
                         ],
                       ),
@@ -507,9 +609,8 @@ class _MembershipTypeCard extends StatelessWidget {
                     children: [
                       Text(
                         type.name,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       if (type.code != null) ...[
                         const SizedBox(height: 2),
@@ -550,9 +651,7 @@ class _MembershipTypeCard extends StatelessWidget {
                               ? Icons.inventory_2_outlined
                               : Icons.restore_outlined,
                         ),
-                        title: Text(
-                          type.isActive ? 'Archive' : 'Restore',
-                        ),
+                        title: Text(type.isActive ? 'Archive' : 'Restore'),
                       ),
                     ),
                   ],
@@ -602,10 +701,7 @@ class _MembershipTypeCard extends StatelessWidget {
                       : 'No auto-renew',
                 ),
                 if (type.minimumAge != null || type.maximumAge != null)
-                  _DetailText(
-                    icon: Icons.cake_outlined,
-                    text: type.ageLabel,
-                  ),
+                  _DetailText(icon: Icons.cake_outlined, text: type.ageLabel),
                 if (type.membershipScope == 'family')
                   _DetailText(
                     icon: Icons.family_restroom_outlined,
@@ -639,7 +735,8 @@ class _MembershipTypeCard extends StatelessWidget {
         .split(RegExp(r'[_\s-]+'))
         .where((part) => part.isNotEmpty)
         .map(
-          (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+          (part) =>
+              '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
@@ -657,8 +754,7 @@ class _MembershipTypeDialog extends StatefulWidget {
   final _MembershipType? existing;
 
   @override
-  State<_MembershipTypeDialog> createState() =>
-      _MembershipTypeDialogState();
+  State<_MembershipTypeDialog> createState() => _MembershipTypeDialogState();
 }
 
 class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
@@ -697,13 +793,15 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
 
     _nameController = TextEditingController(text: existing?.name ?? '');
     _codeController = TextEditingController(text: existing?.code ?? '');
-    _descriptionController =
-        TextEditingController(text: existing?.description ?? '');
+    _descriptionController = TextEditingController(
+      text: existing?.description ?? '',
+    );
     _priceController = TextEditingController(
       text: existing == null ? '0.00' : existing.price.toStringAsFixed(2),
     );
-    _currencyController =
-        TextEditingController(text: existing?.currency.toUpperCase() ?? 'USD');
+    _currencyController = TextEditingController(
+      text: existing?.currency.toUpperCase() ?? 'USD',
+    );
     _termMonthsController = TextEditingController(
       text: existing?.termMonths?.toString() ?? '',
     );
@@ -732,7 +830,8 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
     _termType = existing?.termType ?? 'rolling_year';
     _requiresApproval = existing?.requiresApproval ?? true;
     _requireArbaNumber = existing?.requireArbaNumber ?? false;
-    _allowAutoRenew = widget.membershipManagementAddonEnabled &&
+    _allowAutoRenew =
+        widget.membershipManagementAddonEnabled &&
         (existing?.allowAutoRenew ?? false);
     _isPublic = existing?.isPublic ?? true;
     _isActive = existing?.isActive ?? true;
@@ -1087,8 +1186,9 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
                               border: OutlineInputBorder(),
                             ),
                             validator: (value) {
-                              final price =
-                                  double.tryParse(value?.trim() ?? '');
+                              final price = double.tryParse(
+                                value?.trim() ?? '',
+                              );
                               if (price == null || price < 0) {
                                 return 'Enter a valid price.';
                               }
@@ -1146,8 +1246,7 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
                   value: _requiresApproval,
                   onChanged: _isSaving
                       ? null
-                      : (value) =>
-                          setState(() => _requiresApproval = value),
+                      : (value) => setState(() => _requiresApproval = value),
                 ),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
@@ -1257,10 +1356,8 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
     return {
       'included_adults': _nullableInt(_includedAdultsController.text) ?? 2,
       'included_youth': _nullableInt(_includedYouthController.text) ?? 0,
-      'additional_youth_price': double.tryParse(
-            _additionalYouthPriceController.text.trim(),
-          ) ??
-          0,
+      'additional_youth_price':
+          double.tryParse(_additionalYouthPriceController.text.trim()) ?? 0,
     };
   }
 
@@ -1282,7 +1379,6 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
         return value.trim().isEmpty ? 'individual' : value.trim().toLowerCase();
     }
   }
-
 }
 
 class _ScopeHelpCard extends StatelessWidget {
@@ -1307,7 +1403,8 @@ class _ScopeHelpCard extends StatelessWidget {
         'Use for lifetime memberships. Consider setting Billing type and Term type to Lifetime.',
       'organization' =>
         'Use for clubs, businesses, or organizations instead of individuals.',
-      _ => 'Use for any membership structure that does not fit the standard scopes.',
+      _ =>
+        'Use for any membership structure that does not fit the standard scopes.',
     };
 
     return Material(
@@ -1383,16 +1480,15 @@ class _MutedInfoRow extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ),
       ],
     );
   }
 }
-
 
 class _FamilySettingsCard extends StatelessWidget {
   const _FamilySettingsCard({
@@ -1425,8 +1521,8 @@ class _FamilySettingsCard extends StatelessWidget {
                   child: Text(
                     'Family membership settings',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
@@ -1546,7 +1642,8 @@ class _MembershipType {
 
   String get priceLabel {
     final symbol = currency.toLowerCase() == 'usd' ? r'$' : '';
-    return '$symbol${price.toStringAsFixed(2)} ${currency.toUpperCase()}'.trim();
+    return '$symbol${price.toStringAsFixed(2)} ${currency.toUpperCase()}'
+        .trim();
   }
 
   String get ageLabel {
@@ -1638,18 +1735,12 @@ class _InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Chip(
-      label: Text(label),
-      visualDensity: VisualDensity.compact,
-    );
+    return Chip(label: Text(label), visualDensity: VisualDensity.compact);
   }
 }
 
 class _DetailText extends StatelessWidget {
-  const _DetailText({
-    required this.icon,
-    required this.text,
-  });
+  const _DetailText({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1658,11 +1749,7 @@ class _DetailText extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 18),
-        const SizedBox(width: 6),
-        Text(text),
-      ],
+      children: [Icon(icon, size: 18), const SizedBox(width: 6), Text(text)],
     );
   }
 }
@@ -1698,8 +1785,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),

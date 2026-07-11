@@ -9,3 +9,5 @@ entrypoint = "./functions/stripe-club-billing-subscription-webhook/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/stripe-club-billing-subscription-webhook/*.html" ]
+[functions.process-club-communication-emails]
+verify_jwt = false

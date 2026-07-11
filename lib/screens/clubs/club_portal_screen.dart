@@ -1,9 +1,11 @@
 // lib/screens/clubs/club_portal_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/clubs/club_summary.dart';
 import '../../services/clubs/club_session.dart';
+import '../../theme/app_theme.dart';
 import 'member/club_membership_apply_screen.dart';
 import 'member/club_sanction_request_apply_screen.dart';
 
@@ -28,6 +30,8 @@ class ClubPortalScreen extends StatefulWidget {
 
 class _ClubPortalScreenState extends State<ClubPortalScreen> {
   bool _loadedOnce = false;
+  bool _didApplyDefaultExpansion = false;
+  String? _expandedClubId;
 
   @override
   void initState() {
@@ -66,7 +70,7 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
 
   void _handleSessionChanged() {
     if (mounted) {
-      setState(() {});
+      setState(() => _reconcileExpandedClub(widget.clubSession));
     }
   }
 
@@ -122,6 +126,10 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
     );
 
     if (selectedClub != null) {
+      setState(() {
+        _expandedClubId = selectedClub.clubId;
+        _didApplyDefaultExpansion = true;
+      });
       widget.clubSession.setActiveClub(selectedClub);
     }
   }
@@ -161,6 +169,7 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
   @override
   Widget build(BuildContext context) {
     final session = widget.clubSession;
+    _reconcileExpandedClub(session);
 
     return Scaffold(
       appBar: AppBar(
@@ -210,29 +219,12 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
       );
     }
 
-    final club = session.activeClub;
-    if (club == null) {
-      return _MessageState(
-        icon: Icons.warning_amber_rounded,
-        title: 'Select a club',
-        message: 'Choose a club to continue.',
-        actionLabel: 'Select club',
-        onAction: _showClubSelector,
-      );
-    }
-
     return RefreshIndicator(
       onRefresh: session.refresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(20),
         children: [
-          _ClubHeaderCard(
-            club: club,
-            showSwitcher: session.hasMultipleClubs,
-            onSwitchClub: _showClubSelector,
-          ),
-          const SizedBox(height: 20),
           Text(
             'Choose how you want to continue',
             style: Theme.of(
@@ -240,41 +232,21 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
-          _PortalChoiceCard(
-            icon: Icons.badge_outlined,
-            title: 'Member Portal',
-            description:
-                'View your membership details, digital cards, club documents, announcements, and any member tools enabled by this club.',
-            buttonLabel: 'Open Member Portal',
-            onPressed: () => _openMemberPortal(club),
-          ),
-          const SizedBox(height: 12),
-          _PortalChoiceCard(
-            icon: Icons.assignment_ind_outlined,
-            title: 'Join / Renew Membership',
-            description:
-                'Choose a membership type, submit your information, and pay online when this club accepts online payments.',
-            buttonLabel: 'Start Application',
-            onPressed: () => _openMembershipApplication(club),
-          ),
-          const SizedBox(height: 12),
-          _PortalChoiceCard(
-            icon: Icons.verified_outlined,
-            title: 'Request Sanction',
-            description:
-                'Submit a show sanction request for review by this club. Pay online when this club accepts sanction payments.',
-            buttonLabel: 'Start Sanction Request',
-            onPressed: () => _openSanctionRequest(club),
-          ),
-          if (club.canManageClub) ...[
-            _PortalChoiceCard(
-              icon: Icons.admin_panel_settings_outlined,
-              title: 'Manage Club',
-              description:
-                  'Manage club settings, members, documents, communications, reports, staff access, and any enabled add-on tools.',
-              buttonLabel: 'Open Club Management',
-              onPressed: () => _openAdminPortal(club),
+          for (final club in session.clubs) ...[
+            ClubAccordionSection(
+              club: club,
+              isExpanded: _expandedClubId == club.clubId,
+              onToggle: () => _toggleClub(club),
+              child: _ClubActionPanel(
+                club: club,
+                onOpenMemberPortal: () => _openMemberPortal(club),
+                onOpenMembershipApplication: () =>
+                    _openMembershipApplication(club),
+                onOpenSanctionRequest: () => _openSanctionRequest(club),
+                onOpenAdminPortal: () => _openAdminPortal(club),
+              ),
             ),
+            const SizedBox(height: 12),
           ],
           if (session.errorMessage != null) ...[
             const SizedBox(height: 16),
@@ -297,6 +269,49 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
         ],
       ),
     );
+  }
+
+  void _toggleClub(ClubSummary club) {
+    final shouldExpand = _expandedClubId != club.clubId;
+
+    setState(() {
+      _expandedClubId = shouldExpand ? club.clubId : null;
+      _didApplyDefaultExpansion = true;
+    });
+
+    if (shouldExpand && widget.clubSession.activeClub?.clubId != club.clubId) {
+      widget.clubSession.setActiveClub(club);
+    }
+  }
+
+  void _reconcileExpandedClub(ClubSession session) {
+    final clubs = session.clubs;
+    if (clubs.isEmpty) {
+      _expandedClubId = null;
+      _didApplyDefaultExpansion = false;
+      return;
+    }
+
+    final expandedClubId = _expandedClubId;
+    final expandedClubStillExists =
+        expandedClubId != null &&
+        clubs.any((club) => club.clubId == expandedClubId);
+
+    if (expandedClubStillExists) {
+      _didApplyDefaultExpansion = true;
+      return;
+    }
+
+    if (_didApplyDefaultExpansion && expandedClubId == null) {
+      return;
+    }
+
+    final activeClubId = session.activeClub?.clubId;
+    _expandedClubId =
+        activeClubId != null && clubs.any((club) => club.clubId == activeClubId)
+        ? activeClubId
+        : clubs.first.clubId;
+    _didApplyDefaultExpansion = true;
   }
 
   static String _relationshipLabel(ClubSummary club) {
@@ -326,57 +341,126 @@ class _ClubPortalScreenState extends State<ClubPortalScreen> {
   }
 }
 
-class _ClubHeaderCard extends StatelessWidget {
-  const _ClubHeaderCard({
+class ClubAccordionSection extends StatelessWidget {
+  const ClubAccordionSection({
+    super.key,
     required this.club,
-    required this.showSwitcher,
-    required this.onSwitchClub,
+    required this.isExpanded,
+    required this.onToggle,
+    required this.child,
   });
 
   final ClubSummary club;
-  final bool showSwitcher;
-  final VoidCallback onSwitchClub;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final theme = Theme.of(context);
+    final scopeLabel = ClubPortalScreenStateHelpers.titleCase(club.clubType);
+
+    return Semantics(
+      button: true,
+      toggled: isExpanded,
+      label: '${club.clubName}, ${isExpanded ? 'expanded' : 'collapsed'}',
+      child: Material(
+        color: AppColors.clubCardNavy,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: const BorderSide(color: AppColors.clubLight),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _ClubAvatar(club: club, radius: 32),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    club.clubName,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+            Focus(
+              canRequestFocus: true,
+              onKeyEvent: (_, event) {
+                if (event is! KeyDownEvent) {
+                  return KeyEventResult.ignored;
+                }
+
+                if (event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.space) {
+                  onToggle();
+                  return KeyEventResult.handled;
+                }
+
+                return KeyEventResult.ignored;
+              },
+              child: InkWell(
+                onTap: onToggle,
+                canRequestFocus: false,
+                focusColor: AppColors.gold.withValues(alpha: 0.12),
+                hoverColor: AppColors.clubPrimaryHover.withValues(alpha: 0.18),
+                splashColor: AppColors.gold.withValues(alpha: 0.16),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _ClubAvatar(club: club, radius: 28),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              club.clubName,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                color: AppColors.offWhite,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              ClubPortalScreenStateHelpers.relationshipLabel(
+                                club,
+                              ),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: AppColors.clubLightText,
+                              ),
+                            ),
+                            if (scopeLabel.trim().isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                scopeLabel,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: AppColors.offWhite,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: AppColors.gold,
+                        size: 28,
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    ClubPortalScreenStateHelpers.relationshipLabel(club),
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    ClubPortalScreenStateHelpers.titleCase(club.clubType),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+                ),
               ),
             ),
-            if (showSwitcher)
-              TextButton.icon(
-                onPressed: onSwitchClub,
-                icon: const Icon(Icons.swap_horiz),
-                label: const Text('Switch'),
+            AnimatedCrossFade(
+              firstChild: const SizedBox.shrink(),
+              secondChild: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: child,
               ),
+              crossFadeState: isExpanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 180),
+              firstCurve: Curves.easeOut,
+              secondCurve: Curves.easeOut,
+              sizeCurve: Curves.easeOut,
+            ),
           ],
         ),
       ),
@@ -384,6 +468,68 @@ class _ClubHeaderCard extends StatelessWidget {
   }
 }
 
+class _ClubActionPanel extends StatelessWidget {
+  const _ClubActionPanel({
+    required this.club,
+    required this.onOpenMemberPortal,
+    required this.onOpenMembershipApplication,
+    required this.onOpenSanctionRequest,
+    required this.onOpenAdminPortal,
+  });
+
+  final ClubSummary club;
+  final VoidCallback onOpenMemberPortal;
+  final VoidCallback onOpenMembershipApplication;
+  final VoidCallback onOpenSanctionRequest;
+  final VoidCallback onOpenAdminPortal;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _PortalChoiceCard(
+          icon: Icons.badge_outlined,
+          title: 'Member Portal',
+          description:
+              'View your membership details, digital cards, club documents, announcements, and any member tools enabled by this club.',
+          buttonLabel: 'Open Member Portal',
+          onPressed: onOpenMemberPortal,
+        ),
+        const SizedBox(height: 12),
+        _PortalChoiceCard(
+          icon: Icons.assignment_ind_outlined,
+          title: 'Join / Renew Membership',
+          description:
+              'Choose a membership type, submit your information, and pay online when this club accepts online payments.',
+          buttonLabel: 'Start Application',
+          onPressed: onOpenMembershipApplication,
+        ),
+        if (club.canRequestSanction) ...[
+          const SizedBox(height: 12),
+          _PortalChoiceCard(
+            icon: Icons.verified_outlined,
+            title: 'Request Sanction',
+            description:
+                'Submit a show sanction request for review by this club. Pay online when this club accepts sanction payments.',
+            buttonLabel: 'Start Sanction Request',
+            onPressed: onOpenSanctionRequest,
+          ),
+        ],
+        if (club.canManageClub) ...[
+          const SizedBox(height: 12),
+          _PortalChoiceCard(
+            icon: Icons.admin_panel_settings_outlined,
+            title: 'Manage Club',
+            description:
+                'Manage club settings, members, documents, communications, reports, staff access, and any enabled add-on tools.',
+            buttonLabel: 'Open Club Management',
+            onPressed: onOpenAdminPortal,
+          ),
+        ],
+      ],
+    );
+  }
+}
 
 class _ClubAvatar extends StatelessWidget {
   const _ClubAvatar({required this.club, this.radius = 24});

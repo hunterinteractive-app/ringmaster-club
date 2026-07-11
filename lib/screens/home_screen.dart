@@ -10,6 +10,7 @@ import 'legal/terms_screen.dart';
 import 'login_screen.dart';
 import 'account_settings_screen.dart';
 import '../services/clubs/club_session.dart';
+import '../theme/app_theme.dart';
 import 'clubs/club_portal_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
 import 'clubs/member/club_member_home_screen.dart';
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _clubSession.dispose();
     super.dispose();
   }
+
   Future<void> _openClubPortal() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -54,7 +56,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
 
   Future<void> _initializeHome() async {
     final user = supabase.auth.currentUser;
@@ -75,7 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final termsAccepted =
           profile?['accepted_terms_version'] == LegalConfig.currentTermsVersion;
-      final privacyAccepted = profile?['accepted_privacy_version'] ==
+      final privacyAccepted =
+          profile?['accepted_privacy_version'] ==
           LegalConfig.currentPrivacyVersion;
 
       if (!termsAccepted || !privacyAccepted) {
@@ -92,26 +94,23 @@ class _HomeScreenState extends State<HomeScreen> {
         final now = DateTime.now().toUtc().toIso8601String();
         final fallbackName = _nameFromUser(user);
 
-        await supabase.from('profiles').upsert(
-          {
-            'user_id': user.id,
-            'email': user.email,
-            'display_name':
-                _cleanText(profile?['display_name']) ?? fallbackName,
-            'accepted_terms_version': LegalConfig.currentTermsVersion,
-            'accepted_terms_at': now,
-            'accepted_privacy_version': LegalConfig.currentPrivacyVersion,
-            'accepted_privacy_at': now,
-          },
-          onConflict: 'user_id',
-        );
+        await supabase.from('profiles').upsert({
+          'user_id': user.id,
+          'email': user.email,
+          'display_name': _cleanText(profile?['display_name']) ?? fallbackName,
+          'accepted_terms_version': LegalConfig.currentTermsVersion,
+          'accepted_terms_at': now,
+          'accepted_privacy_version': LegalConfig.currentPrivacyVersion,
+          'accepted_privacy_at': now,
+        }, onConflict: 'user_id');
       }
 
       final accountReady = await _ensureRequiredAccountSetup(user.id);
       if (!accountReady || !mounted) return;
 
-      final primaryDisplayName =
-          await _ensureAndLoadPrimaryDisplayName(user.id);
+      final primaryDisplayName = await _ensureAndLoadPrimaryDisplayName(
+        user.id,
+      );
 
       if (!mounted) return;
 
@@ -134,7 +133,8 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (error) {
       if (!mounted) return;
 
-      final retry = await showDialog<bool>(
+      final retry =
+          await showDialog<bool>(
             context: context,
             barrierDismissible: false,
             builder: (dialogContext) => AlertDialog(
@@ -182,9 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final lookupResponse = await supabase.functions.invoke(
       'import-ringmaster-show-account',
       method: HttpMethod.post,
-      body: const {
-        'action': 'lookup',
-      },
+      body: const {'action': 'lookup'},
     );
 
     final lookupData = lookupResponse.data is Map
@@ -201,9 +199,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final rawMatches = lookupData['matches'];
       final matches = rawMatches is List
           ? rawMatches
-              .whereType<Map>()
-              .map((row) => Map<String, dynamic>.from(row))
-              .toList()
+                .whereType<Map>()
+                .map((row) => Map<String, dynamic>.from(row))
+                .toList()
           : <Map<String, dynamic>>[];
 
       if (matches.isEmpty) {
@@ -219,10 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final importResponse = await supabase.functions.invoke(
         'import-ringmaster-show-account',
         method: HttpMethod.post,
-        body: {
-          'action': 'import',
-          'exhibitor_ids': exhibitorIds,
-        },
+        body: {'action': 'import', 'exhibitor_ids': exhibitorIds},
       );
 
       final importData = importResponse.data is Map
@@ -239,21 +234,25 @@ class _HomeScreenState extends State<HomeScreen> {
         final rawRecords = importData['records'];
         final records = rawRecords is List
             ? rawRecords
-                .whereType<Map>()
-                .map((row) => Map<String, dynamic>.from(row))
-                .toList()
+                  .whereType<Map>()
+                  .map((row) => Map<String, dynamic>.from(row))
+                  .toList()
             : <Map<String, dynamic>>[];
 
-        final details = records.map((record) {
-          final name =
-              (record['display_name'] ?? record['exhibitor_id'] ?? 'Account')
-                  .toString();
-          final rawMissing = record['missing_fields'];
-          final missing = rawMissing is List
-              ? rawMissing.map((value) => value.toString()).join(', ')
-              : 'required account information';
-          return '$name: $missing';
-        }).join('\n');
+        final details = records
+            .map((record) {
+              final name =
+                  (record['display_name'] ??
+                          record['exhibitor_id'] ??
+                          'Account')
+                      .toString();
+              final rawMissing = record['missing_fields'];
+              final missing = rawMissing is List
+                  ? rawMissing.map((value) => value.toString()).join(', ')
+                  : 'required account information';
+              return '$name: $missing';
+            })
+            .join('\n');
 
         throw Exception(
           details.isEmpty
@@ -282,8 +281,8 @@ class _HomeScreenState extends State<HomeScreen> {
               status == 'not_found'
                   ? 'No eligible RingMaster Show account was found using your signed-in email address.'
                   : status == 'multiple_matches'
-                      ? 'More than one RingMaster Show account was found, but the import service did not return enough information to confirm them.'
-                      : 'A RingMaster Show account was found, but required information is missing. Please complete the setup form.',
+                  ? 'More than one RingMaster Show account was found, but the import service did not return enough information to confirm them.'
+                  : 'A RingMaster Show account was found, but required information is missing. Please complete the setup form.',
             ),
             actions: [
               FilledButton(
@@ -309,9 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return false;
 
     final saved = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => const AccountProfileSetupScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const AccountProfileSetupScreen()),
     );
 
     return saved == true;
@@ -352,13 +349,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                 .toString();
                         final city = (match['city'] ?? '').toString().trim();
                         final state = (match['state'] ?? '').toString().trim();
-                        final phone =
-                            (match['phone_last_four'] ?? '').toString().trim();
-                        final accountType =
-                            (match['account_type'] ?? '').toString().trim();
-                        final location = [city, state]
-                            .where((value) => value.isNotEmpty)
-                            .join(', ');
+                        final phone = (match['phone_last_four'] ?? '')
+                            .toString()
+                            .trim();
+                        final accountType = (match['account_type'] ?? '')
+                            .toString()
+                            .trim();
+                        final location = [
+                          city,
+                          state,
+                        ].where((value) => value.isNotEmpty).join(', ');
 
                         final details = <String>[
                           if (accountType.isNotEmpty)
@@ -373,9 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           controlAffinity: ListTileControlAffinity.leading,
                           title: Text(
                             name,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           subtitle: details.isEmpty ? null : Text(details),
                           onChanged: id.isEmpty
@@ -407,9 +405,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 FilledButton.icon(
                   onPressed: selectedIds.isEmpty
                       ? null
-                      : () => Navigator.of(dialogContext).pop(
-                            selectedIds.toList(),
-                          ),
+                      : () => Navigator.of(
+                          dialogContext,
+                        ).pop(selectedIds.toList()),
                   icon: const Icon(Icons.link),
                   label: Text(
                     selectedIds.length == 1
@@ -425,9 +423,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<String?> _ensureAndLoadPrimaryDisplayName(
-    String userId,
-  ) async {
+  Future<String?> _ensureAndLoadPrimaryDisplayName(String userId) async {
     final rows = await supabase
         .from('exhibitors')
         .select(
@@ -465,19 +461,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (primary['is_primary'] != true) {
       await supabase
           .from('exhibitors')
-          .update({
-            'is_primary': false,
-            'updated_at': now,
-          })
+          .update({'is_primary': false, 'updated_at': now})
           .eq('owner_user_id', userId)
           .eq('is_primary', true);
 
       await supabase
           .from('exhibitors')
-          .update({
-            'is_primary': true,
-            'updated_at': now,
-          })
+          .update({'is_primary': true, 'updated_at': now})
           .eq('id', primaryId)
           .eq('owner_user_id', userId);
     }
@@ -485,15 +475,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = supabase.auth.currentUser;
 
     if (displayName != null && user != null) {
-      await supabase.from('profiles').upsert(
-        {
-          'user_id': user.id,
-          'email': user.email,
-          'display_name': displayName,
-          'updated_at': now,
-        },
-        onConflict: 'user_id',
-      );
+      await supabase.from('profiles').upsert({
+        'user_id': user.id,
+        'email': user.email,
+        'display_name': displayName,
+        'updated_at': now,
+      }, onConflict: 'user_id');
     }
 
     return displayName;
@@ -512,12 +499,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return aYouth ? 1 : -1;
       }
 
-      final aBirthDate = DateTime.tryParse(
-        (a['birth_date'] ?? '').toString(),
-      );
-      final bBirthDate = DateTime.tryParse(
-        (b['birth_date'] ?? '').toString(),
-      );
+      final aBirthDate = DateTime.tryParse((a['birth_date'] ?? '').toString());
+      final bBirthDate = DateTime.tryParse((b['birth_date'] ?? '').toString());
 
       if (aBirthDate != null && bBirthDate != null) {
         return aBirthDate.compareTo(bBirthDate);
@@ -526,24 +509,21 @@ class _HomeScreenState extends State<HomeScreen> {
       if (aBirthDate != null) return -1;
       if (bBirthDate != null) return 1;
 
-      return (a['created_at'] ?? '')
-          .toString()
-          .compareTo((b['created_at'] ?? '').toString());
+      return (a['created_at'] ?? '').toString().compareTo(
+        (b['created_at'] ?? '').toString(),
+      );
     });
 
     return sorted.first;
   }
 
-  bool _isYouthExhibitor(
-    Map<String, dynamic> exhibitor,
-  ) {
+  bool _isYouthExhibitor(Map<String, dynamic> exhibitor) {
     final accountType = (exhibitor['account_type'] ?? '')
         .toString()
         .trim()
         .toLowerCase();
 
-    if (accountType.contains('youth') ||
-        accountType.contains('child')) {
+    if (accountType.contains('youth') || accountType.contains('child')) {
       return true;
     }
 
@@ -567,9 +547,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return age < 18;
   }
 
-  String? _exhibitorDisplayName(
-    Map<String, dynamic> exhibitor,
-  ) {
+  String? _exhibitorDisplayName(Map<String, dynamic> exhibitor) {
     final directName =
         _cleanText(exhibitor['display_name']) ??
         _cleanText(exhibitor['showing_name']);
@@ -579,28 +557,25 @@ class _HomeScreenState extends State<HomeScreen> {
     final firstName = _cleanText(exhibitor['first_name']);
     final lastName = _cleanText(exhibitor['last_name']);
 
-    final generated = [firstName, lastName]
-        .whereType<String>()
-        .join(' ')
-        .trim();
+    final generated = [
+      firstName,
+      lastName,
+    ].whereType<String>().join(' ').trim();
 
     return generated.isEmpty ? null : generated;
   }
 
   Future<void> _openAccountSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const AccountSettingsScreen(),
-      ),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AccountSettingsScreen()));
 
     if (!mounted) return;
 
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    final primaryDisplayName =
-        await _ensureAndLoadPrimaryDisplayName(user.id);
+    final primaryDisplayName = await _ensureAndLoadPrimaryDisplayName(user.id);
 
     if (!mounted || primaryDisplayName == null) return;
 
@@ -615,7 +590,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _nameFromUser(User user) {
-    final metadataName = _cleanText(user.userMetadata?['display_name']) ??
+    final metadataName =
+        _cleanText(user.userMetadata?['display_name']) ??
         _cleanText(user.userMetadata?['full_name']) ??
         _cleanText(user.userMetadata?['name']);
 
@@ -742,12 +718,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     if (_checkingLegal) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
-    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -815,9 +787,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
-              child: CircleAvatar(
-                child: Icon(Icons.person_outline),
-              ),
+              child: CircleAvatar(child: Icon(Icons.person_outline)),
             ),
           ),
         ],
@@ -834,12 +804,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Container(
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          colorScheme.primaryContainer,
-                          colorScheme.secondaryContainer,
-                        ],
-                      ),
+                      color: AppColors.clubCardNavy,
+                      border: Border.all(color: AppColors.clubLight),
                       borderRadius: BorderRadius.circular(24),
                     ),
                     child: Column(
@@ -847,16 +813,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         Text(
                           'Welcome, ${_displayName ?? 'Member'}!',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.bold),
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(
+                                color: AppColors.offWhite,
+                                fontWeight: FontWeight.bold,
+                              ),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Your central home for RingMaster Club tools, '
                           'resources, and membership information.',
-                          style: Theme.of(context).textTheme.bodyLarge,
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: _HomeActionCard.descriptionColor,
+                              ),
                         ),
                       ],
                     ),
@@ -867,12 +837,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       final columns = constraints.maxWidth >= 900
                           ? 3
                           : constraints.maxWidth >= 600
-                              ? 2
-                              : 1;
+                          ? 2
+                          : 1;
                       const spacing = 16.0;
                       final width =
                           (constraints.maxWidth - spacing * (columns - 1)) /
-                              columns;
+                          columns;
 
                       return Wrap(
                         spacing: spacing,
@@ -940,13 +910,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _comingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature is coming soon.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
   }
 }
 
-class _HomeActionCard extends StatelessWidget {
+class _HomeActionCard extends StatefulWidget {
   const _HomeActionCard({
     required this.width,
     required this.icon,
@@ -961,36 +931,63 @@ class _HomeActionCard extends StatelessWidget {
   final String description;
   final VoidCallback onTap;
 
+  static const titleColor = AppColors.offWhite;
+  static const descriptionColor = Color(0xFFDDE1E2);
+
+  @override
+  State<_HomeActionCard> createState() => _HomeActionCardState();
+}
+
+class _HomeActionCardState extends State<_HomeActionCard> {
+  bool _isHovered = false;
+  bool _isFocused = false;
+
   @override
   Widget build(BuildContext context) {
+    final isActive = _isHovered || _isFocused;
+    final backgroundColor = isActive
+        ? Color.lerp(AppColors.clubCardNavy, AppColors.clubLightText, 0.08)!
+        : AppColors.clubCardNavy;
+    final borderColor = isActive ? AppColors.gold : AppColors.clubLight;
+    final borderWidth = isActive ? 2.0 : 1.0;
+
     return SizedBox(
-      width: width,
+      width: widget.width,
       child: Card(
         clipBehavior: Clip.antiAlias,
+        color: backgroundColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          side: BorderSide(color: borderColor, width: borderWidth),
+        ),
         child: InkWell(
-          onTap: onTap,
+          onTap: widget.onTap,
+          onHover: (value) => setState(() => _isHovered = value),
+          onFocusChange: (value) => setState(() => _isFocused = value),
+          splashColor: AppColors.gold.withValues(alpha: 0.14),
+          highlightColor: AppColors.clubLightText.withValues(alpha: 0.06),
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  icon,
-                  size: 36,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                Icon(widget.icon, size: 36, color: AppColors.clubLight),
                 const SizedBox(height: 16),
                 Text(
-                  title,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
+                  widget.title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: _HomeActionCard.titleColor,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  description,
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  widget.description,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _HomeActionCard.descriptionColor,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -999,12 +996,16 @@ class _HomeActionCard extends StatelessWidget {
                     Text(
                       'Open',
                       style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
+                        color: AppColors.gold,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(Icons.arrow_forward, size: 18),
+                    const Icon(
+                      Icons.arrow_forward,
+                      size: 18,
+                      color: AppColors.gold,
+                    ),
                   ],
                 ),
               ],

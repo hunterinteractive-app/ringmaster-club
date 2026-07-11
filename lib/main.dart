@@ -34,6 +34,14 @@ class RingMasterClubApp extends StatelessWidget {
       title: 'RingMaster Club',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      builder: (context, child) {
+        return DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: AppColors.clubBackgroundGradient,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const Root(),
     );
   }

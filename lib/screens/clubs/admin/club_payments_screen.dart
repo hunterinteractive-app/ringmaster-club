@@ -4,12 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../services/clubs/club_communications_service.dart';
 
 class ClubPaymentsScreen extends StatefulWidget {
-  const ClubPaymentsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubPaymentsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -19,6 +17,7 @@ class ClubPaymentsScreen extends StatefulWidget {
 
 class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
   final _supabase = Supabase.instance.client;
+  final _communicationsService = ClubCommunicationsService();
   final _searchController = TextEditingController();
 
   bool _isLoading = true;
@@ -86,41 +85,91 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
             .order('created_at', ascending: false),
         _supabase
             .from('club_memberships')
-            .select('id,first_name,last_name,showing_name,membership_number,email')
+            .select(
+              'id,first_name,last_name,showing_name,membership_number,email',
+            )
             .eq('club_id', widget.club.clubId)
             .order('last_name', ascending: true)
             .order('first_name', ascending: true),
+        _supabase
+            .from('club_membership_applications')
+            .select(
+              'id,club_id,membership_type_id,status,payment_status,first_name,last_name,'
+              'showing_name,email,applicant_message,application_details,submitted_at,created_at',
+            )
+            .eq('club_id', widget.club.clubId)
+            .order('submitted_at', ascending: false)
+            .order('created_at', ascending: false),
+        _supabase
+            .from('club_payments')
+            .select(
+              'id,club_id,source_type,source_id,payment_method,status,'
+              'amount_subtotal,amount_total,amount_paid,currency,fee_mode,'
+              'stripe_checkout_session_id,stripe_payment_intent_id,reference_number,'
+              'notes,recorded_at,created_at,updated_at',
+            )
+            .eq('club_id', widget.club.clubId)
+            .order('recorded_at', ascending: false)
+            .order('created_at', ascending: false),
       ]);
 
       final paymentRows = responses[0] as List;
       final memberRows = responses[1] as List;
+      final applicationRows = responses[2] as List;
+      final clubPaymentRows = responses[3] as List;
 
       final members = memberRows
           .whereType<Map>()
-          .map(
-            (row) => _MemberOption.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
-          )
+          .map((row) => _MemberOption.fromJson(Map<String, dynamic>.from(row)))
           .toList();
 
       final memberMap = <String, _MemberOption>{
         for (final member in members) member.id: member,
       };
 
-      final payments = paymentRows
-          .whereType<Map>()
-          .map(
-            (row) {
-              final json = Map<String, dynamic>.from(row);
-              final memberId = json['club_membership_id']?.toString();
-              return _PaymentRecord.fromJson(
-                json,
-                member: memberId == null ? null : memberMap[memberId],
-              );
-            },
-          )
-          .toList();
+      final clubPaymentBySource = <String, Map<String, dynamic>>{};
+      for (final row in clubPaymentRows.whereType<Map>()) {
+        final json = Map<String, dynamic>.from(row);
+        final sourceType = json['source_type']?.toString();
+        final sourceId = json['source_id']?.toString();
+        if (sourceType == null || sourceId == null) continue;
+        clubPaymentBySource['$sourceType:$sourceId'] = json;
+      }
+
+      final payments = <_PaymentRecord>[];
+
+      for (final row in paymentRows.whereType<Map>()) {
+        payments.add(
+          _PaymentRecord.fromMembershipPaymentJson(
+            Map<String, dynamic>.from(row),
+            member: memberMap[row['club_membership_id']?.toString()],
+          ),
+        );
+      }
+
+      for (final row in applicationRows.whereType<Map>()) {
+        final json = Map<String, dynamic>.from(row);
+        final applicationId = json['id']?.toString();
+        payments.add(
+          _PaymentRecord.fromMembershipApplicationJson(
+            json,
+            clubPayment: applicationId == null
+                ? null
+                : clubPaymentBySource['membership_due:$applicationId'],
+          ),
+        );
+      }
+
+      for (final row in clubPaymentRows.whereType<Map>()) {
+        if ((row['source_type']?.toString() ?? '') == 'membership_due') {
+          continue;
+        }
+        payments.add(
+          _PaymentRecord.fromClubPaymentJson(Map<String, dynamic>.from(row)),
+        );
+      }
+
+      payments.sort((a, b) => b.sortDate.compareTo(a.sortDate));
 
       if (!mounted) return;
 
@@ -145,20 +194,205 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
 
     return _payments.where((payment) {
       final matchesStatus =
-          _statusFilter == 'all' || payment.status == _statusFilter;
+          _statusFilter == 'all' ||
+          payment.status == _statusFilter ||
+          payment.bucket == _statusFilter;
       if (!matchesStatus) return false;
       if (query.isEmpty) return true;
 
       final searchable = [
+        payment.displayName,
+        payment.subtitle,
         payment.member?.displayName,
         payment.member?.membershipNumber,
         payment.member?.email,
         payment.referenceNumber,
         payment.paymentMethod,
+        payment.sourceType,
       ].whereType<String>().join(' ').toLowerCase();
 
       return searchable.contains(query);
     }).toList();
+  }
+
+  Future<void> _markPaymentRecordPaid(_PaymentRecord payment) async {
+    if (payment.sourceType == null || payment.sourceId == null) return;
+
+    setState(() => _errorMessage = null);
+
+    try {
+      final now = DateTime.now().toIso8601String();
+
+      if (payment.sourceType == 'membership_due') {
+        await _supabase
+            .from('club_membership_applications')
+            .update({'payment_status': 'paid'})
+            .eq('id', payment.sourceId!);
+
+        final existingPayment = await _supabase
+            .from('club_payments')
+            .select('id')
+            .eq('club_id', widget.club.clubId)
+            .eq('source_type', payment.sourceType!)
+            .eq('source_id', payment.sourceId!)
+            .maybeSingle();
+
+        final payload = {
+          'club_id': widget.club.clubId,
+          'source_type': payment.sourceType,
+          'source_id': payment.sourceId,
+          'payment_method': 'check',
+          'status': 'paid',
+          'amount_subtotal': (payment.amountDue * 100).round(),
+          'amount_total': (payment.amountDue * 100).round(),
+          'amount_paid': (payment.amountDue * 100).round(),
+          'currency': payment.currency.toLowerCase(),
+          'fee_mode': 'club_handled',
+          'notes': 'Marked paid from Payments & Dues.',
+          'recorded_at': now,
+          'updated_at': now,
+        };
+
+        if (existingPayment == null) {
+          await _supabase.from('club_payments').insert(payload);
+        } else {
+          await _supabase
+              .from('club_payments')
+              .update(payload)
+              .eq('id', existingPayment['id']);
+        }
+      } else if (payment.sourceType == 'sanction_request') {
+        await _supabase
+            .from('club_sanction_requests')
+            .update({
+              'payment_status': 'paid',
+              'amount_paid': payment.amountDue,
+            })
+            .eq('id', payment.sourceId!);
+      }
+
+      await _createPaymentCommunication(
+        payment,
+        templateKey: 'payment_received',
+        staffMessage: '',
+      );
+
+      await _loadData();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Unable to mark payment paid: $error';
+      });
+    }
+  }
+
+  Future<void> _sendPendingCheckReminder(_PaymentRecord payment) async {
+    if (payment.sourceType == null || payment.sourceId == null) return;
+
+    setState(() => _errorMessage = null);
+
+    try {
+      await _createPaymentCommunication(
+        payment,
+        templateKey: 'pending_check_reminder',
+        staffMessage:
+            'Please mail your check so the club can complete this payment.',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pending check reminder created.')),
+      );
+      await _loadData();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Unable to create pending check reminder: $error';
+      });
+    }
+  }
+
+  Future<void> _createPaymentCommunication(
+    _PaymentRecord payment, {
+    required String templateKey,
+    required String staffMessage,
+  }) async {
+    final recipient = await _loadPaymentRecipient(payment);
+    if (recipient == null) return;
+
+    await _communicationsService.createWorkflowCommunication(
+      clubId: widget.club.clubId,
+      clubName: widget.club.clubName,
+      templateKey: templateKey,
+      relatedType: payment.sourceType!,
+      relatedId: payment.sourceId!,
+      recipientUserId: recipient.userId,
+      recipientEmail: recipient.email,
+      recipientName: recipient.name,
+      audienceType: payment.sourceType!,
+      variables: {
+        'amount_due': _money(payment.amountDue),
+        'amount_paid': _money(
+          templateKey == 'payment_received'
+              ? payment.amountDue
+              : payment.amountPaid,
+        ),
+        'payment_method': _titleCase(payment.paymentMethod),
+        'treasurer_mailing_address': recipient.treasurerMailingAddress ?? '',
+        'staff_message': staffMessage,
+      },
+      preferEmailWhenAvailable: true,
+      createdBy: _supabase.auth.currentUser?.id,
+    );
+  }
+
+  Future<_PaymentRecipient?> _loadPaymentRecipient(
+    _PaymentRecord payment,
+  ) async {
+    if (payment.sourceType == 'membership_due') {
+      final row = await _supabase
+          .from('club_membership_applications')
+          .select('user_id,first_name,last_name,email,application_details')
+          .eq('id', payment.sourceId!)
+          .maybeSingle();
+      if (row == null) return null;
+
+      final firstName = _nullableString(row['first_name']) ?? '';
+      final lastName = _nullableString(row['last_name']) ?? '';
+      final details = _nullableJsonMap(row['application_details']);
+      final checkPayment = details?['check_payment'];
+      return _PaymentRecipient(
+        userId: _nullableString(row['user_id']),
+        email: _nullableString(row['email']),
+        name: '$firstName $lastName'.trim().isEmpty
+            ? payment.displayName
+            : '$firstName $lastName'.trim(),
+        treasurerMailingAddress: checkPayment is Map
+            ? _nullableString(checkPayment['mailing_address'])
+            : null,
+      );
+    }
+
+    if (payment.sourceType == 'sanction_request') {
+      final row = await _supabase
+          .from('club_sanction_requests')
+          .select('contact_name,contact_email,request_details')
+          .eq('id', payment.sourceId!)
+          .maybeSingle();
+      if (row == null) return null;
+
+      final details = _nullableJsonMap(row['request_details']);
+      final checkPayment = details?['check_payment'];
+      return _PaymentRecipient(
+        email: _nullableString(row['contact_email']),
+        name: _nullableString(row['contact_name']) ?? payment.displayName,
+        treasurerMailingAddress: checkPayment is Map
+            ? _nullableString(checkPayment['mailing_address'])
+            : null,
+      );
+    }
+
+    return null;
   }
 
   double get _totalDue =>
@@ -167,10 +401,8 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
   double get _totalPaid =>
       _payments.fold(0, (total, payment) => total + payment.amountPaid);
 
-  double get _totalOutstanding => _payments.fold(
-        0,
-        (total, payment) => total + payment.outstandingAmount,
-      );
+  double get _totalOutstanding =>
+      _payments.fold(0, (total, payment) => total + payment.outstandingAmount);
 
   void _showLockedFeature() {
     showDialog<void>(
@@ -201,6 +433,7 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
       barrierDismissible: false,
       builder: (_) => _PaymentEditorDialog(
         clubId: widget.club.clubId,
+        clubName: widget.club.clubName,
         members: _members,
         existing: existing,
       ),
@@ -228,8 +461,8 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
         onPressed: _isLoading
             ? null
             : _membershipManagementAddonEnabled
-                ? () => _openEditor()
-                : _showLockedFeature,
+            ? () => _openEditor()
+            : _showLockedFeature,
         icon: Icon(
           _membershipManagementAddonEnabled
               ? Icons.add_card
@@ -277,9 +510,9 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -348,10 +581,14 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
             child: SegmentedButton<String>(
               segments: const [
                 ButtonSegment(value: 'all', label: Text('All')),
+                ButtonSegment(value: 'online', label: Text('Online')),
+                ButtonSegment(
+                  value: 'pending_check',
+                  label: Text('Pending Checks'),
+                ),
+                ButtonSegment(value: 'manual', label: Text('Manual')),
                 ButtonSegment(value: 'unpaid', label: Text('Unpaid')),
-                ButtonSegment(value: 'partial', label: Text('Partial')),
                 ButtonSegment(value: 'paid', label: Text('Paid')),
-                ButtonSegment(value: 'refunded', label: Text('Refunded')),
                 ButtonSegment(value: 'waived', label: Text('Waived')),
               ],
               selected: {_statusFilter},
@@ -374,9 +611,9 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
           ],
           Text(
             '${filtered.length} ${filtered.length == 1 ? 'record' : 'records'}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           if (_payments.isEmpty)
@@ -409,7 +646,15 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
                         width: width,
                         child: _PaymentCard(
                           payment: payment,
-                          onEdit: () => _openEditor(existing: payment),
+                          onEdit: payment.canEditAsMembershipPayment
+                              ? () => _openEditor(existing: payment)
+                              : null,
+                          onMarkPaid: payment.canMarkPaid
+                              ? () => _markPaymentRecordPaid(payment)
+                              : null,
+                          onSendReminder: payment.canSendPendingCheckReminder
+                              ? () => _sendPendingCheckReminder(payment)
+                              : null,
                         ),
                       ),
                   ],
@@ -425,11 +670,15 @@ class _ClubPaymentsScreenState extends State<ClubPaymentsScreen> {
 class _PaymentCard extends StatelessWidget {
   const _PaymentCard({
     required this.payment,
-    required this.onEdit,
+    this.onEdit,
+    this.onMarkPaid,
+    this.onSendReminder,
   });
 
   final _PaymentRecord payment;
-  final VoidCallback onEdit;
+  final VoidCallback? onEdit;
+  final VoidCallback? onMarkPaid;
+  final VoidCallback? onSendReminder;
 
   @override
   Widget build(BuildContext context) {
@@ -461,25 +710,24 @@ class _PaymentCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          payment.member?.displayName ?? 'Unknown Member',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                          payment.displayName,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
-                        if (payment.member?.membershipNumber != null)
+                        if (payment.subtitle != null)
                           Text(
-                            'Member #${payment.member!.membershipNumber}',
+                            payment.subtitle!,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Edit payment',
-                    onPressed: onEdit,
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
+                  if (onEdit != null)
+                    IconButton(
+                      tooltip: 'Edit payment',
+                      onPressed: onEdit,
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -529,6 +777,35 @@ class _PaymentCard extends StatelessWidget {
                   icon: Icons.date_range_outlined,
                   text: payment.termLabel,
                 ),
+              if (payment.notes != null)
+                _PaymentDetail(
+                  icon: Icons.notes_outlined,
+                  text: payment.notes!,
+                ),
+              if (onMarkPaid != null || onSendReminder != null) ...[
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (onSendReminder != null)
+                        OutlinedButton.icon(
+                          onPressed: onSendReminder,
+                          icon: const Icon(Icons.mark_email_unread_outlined),
+                          label: const Text('Remind'),
+                        ),
+                      if (onMarkPaid != null)
+                        FilledButton.icon(
+                          onPressed: onMarkPaid,
+                          icon: const Icon(Icons.check_circle_outline),
+                          label: const Text('Mark Paid'),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -556,22 +833,24 @@ class _PaymentCard extends StatelessWidget {
 class _PaymentEditorDialog extends StatefulWidget {
   const _PaymentEditorDialog({
     required this.clubId,
+    required this.clubName,
     required this.members,
     this.existing,
   });
 
   final String clubId;
+  final String clubName;
   final List<_MemberOption> members;
   final _PaymentRecord? existing;
 
   @override
-  State<_PaymentEditorDialog> createState() =>
-      _PaymentEditorDialogState();
+  State<_PaymentEditorDialog> createState() => _PaymentEditorDialogState();
 }
 
 class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   final _supabase = Supabase.instance.client;
+  final _communicationsService = ClubCommunicationsService();
 
   late final TextEditingController _amountDueController;
   late final TextEditingController _amountPaidController;
@@ -678,15 +957,27 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
 
     try {
       final existing = widget.existing;
+      late final String paymentId;
 
       if (existing == null) {
-        await _supabase.from('club_membership_payments').insert(payload);
+        final inserted = await _supabase
+            .from('club_membership_payments')
+            .insert(payload)
+            .select('id')
+            .single();
+        paymentId = inserted['id'].toString();
       } else {
         await _supabase
             .from('club_membership_payments')
             .update(payload)
             .eq('id', existing.id)
             .eq('club_id', widget.clubId);
+        paymentId = existing.id;
+      }
+
+      final shouldSendReceipt = _status == 'paid' && existing?.status != 'paid';
+      if (shouldSendReceipt) {
+        await _createManualPaymentReceivedCommunication(paymentId);
       }
 
       if (!mounted) return;
@@ -699,6 +990,38 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
         _errorMessage = 'Unable to save payment: $error';
       });
     }
+  }
+
+  Future<void> _createManualPaymentReceivedCommunication(String paymentId) async {
+    final memberId = _memberId;
+    if (memberId == null) return;
+
+    final member = widget.members.where((item) => item.id == memberId).firstOrNull;
+    if (member == null) return;
+
+    await _communicationsService.createWorkflowCommunication(
+      clubId: widget.clubId,
+      clubName: widget.clubName,
+      templateKey: 'payment_received',
+      relatedType: 'membership_due',
+      relatedId: paymentId,
+      recipientEmail: member.email,
+      recipientName: member.displayName,
+      audienceType: 'membership_due',
+      variables: {
+        'amount_due': _money(
+          double.tryParse(_amountDueController.text.trim()) ?? 0,
+        ),
+        'amount_paid': _money(
+          double.tryParse(_amountPaidController.text.trim()) ?? 0,
+        ),
+        'payment_method': _titleCase(_paymentMethod),
+        'treasurer_mailing_address': '',
+        'staff_message': '',
+      },
+      preferEmailWhenAvailable: true,
+      createdBy: _supabase.auth.currentUser?.id,
+    );
   }
 
   Future<void> _pickDate(TextEditingController controller) async {
@@ -717,9 +1040,7 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(
-        widget.existing == null ? 'Record Payment' : 'Edit Payment',
-      ),
+      title: Text(widget.existing == null ? 'Record Payment' : 'Edit Payment'),
       content: SizedBox(
         width: 700,
         child: Form(
@@ -809,10 +1130,7 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
                           value: 'partial',
                           child: Text('Partial'),
                         ),
-                        DropdownMenuItem(
-                          value: 'paid',
-                          child: Text('Paid'),
-                        ),
+                        DropdownMenuItem(value: 'paid', child: Text('Paid')),
                         DropdownMenuItem(
                           value: 'refunded',
                           child: Text('Refunded'),
@@ -841,22 +1159,10 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
                           value: 'online',
                           child: Text('Online'),
                         ),
-                        DropdownMenuItem(
-                          value: 'cash',
-                          child: Text('Cash'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'check',
-                          child: Text('Check'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'card',
-                          child: Text('Card'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'other',
-                          child: Text('Other'),
-                        ),
+                        DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                        DropdownMenuItem(value: 'check', child: Text('Check')),
+                        DropdownMenuItem(value: 'card', child: Text('Card')),
+                        DropdownMenuItem(value: 'other', child: Text('Other')),
                       ],
                       onChanged: _isSaving
                           ? null
@@ -953,13 +1259,19 @@ class _PaymentEditorDialogState extends State<_PaymentEditorDialog> {
 class _PaymentRecord {
   const _PaymentRecord({
     required this.id,
-    required this.clubMembershipId,
     required this.amountDue,
     required this.amountPaid,
     required this.currency,
     required this.status,
     required this.paymentMethod,
+    required this.displayName,
+    required this.sortDate,
+    required this.bucket,
+    this.clubMembershipId,
     this.member,
+    this.subtitle,
+    this.sourceType,
+    this.sourceId,
     this.paymentDate,
     this.referenceNumber,
     this.termStart,
@@ -969,13 +1281,19 @@ class _PaymentRecord {
   });
 
   final String id;
-  final String clubMembershipId;
+  final String? clubMembershipId;
   final _MemberOption? member;
   final double amountDue;
   final double amountPaid;
   final String currency;
   final String status;
   final String paymentMethod;
+  final String displayName;
+  final String? subtitle;
+  final String? sourceType;
+  final String? sourceId;
+  final DateTime sortDate;
+  final String bucket;
   final DateTime? paymentDate;
   final String? referenceNumber;
   final DateTime? termStart;
@@ -988,6 +1306,23 @@ class _PaymentRecord {
     return amount > 0 ? amount : 0;
   }
 
+  bool get canEditAsMembershipPayment =>
+      sourceType == null && clubMembershipId != null;
+
+  bool get canMarkPaid {
+    if (status == 'paid' || status == 'waived') return false;
+    return sourceType == 'membership_due' || sourceType == 'sanction_request';
+  }
+
+  bool get canSendPendingCheckReminder {
+    if (sourceType != 'membership_due' && sourceType != 'sanction_request') {
+      return false;
+    }
+    if (status == 'paid' || status == 'waived') return false;
+    return bucket == 'pending_check' ||
+        paymentMethod.toLowerCase().contains('check');
+  }
+
   String get termLabel {
     if (termStart != null && termEnd != null) {
       return 'Term: ${_formatDate(termStart!)} – ${_formatDate(termEnd!)}';
@@ -997,20 +1332,29 @@ class _PaymentRecord {
     return 'No term dates';
   }
 
-  factory _PaymentRecord.fromJson(
+  factory _PaymentRecord.fromMembershipPaymentJson(
     Map<String, dynamic> json, {
     _MemberOption? member,
   }) {
+    final createdAt = _nullableDate(json['created_at']) ?? DateTime.now();
+    final paymentDate = _nullableDate(json['payment_date']);
+    final memberName = member?.displayName ?? 'Unknown Member';
     return _PaymentRecord(
       id: json['id'].toString(),
-      clubMembershipId: json['club_membership_id'].toString(),
+      clubMembershipId: json['club_membership_id']?.toString(),
       member: member,
       amountDue: _doubleValue(json['amount_due']),
       amountPaid: _doubleValue(json['amount_paid']),
       currency: _nullableString(json['currency']) ?? 'usd',
       status: _nullableString(json['status']) ?? 'unpaid',
       paymentMethod: _nullableString(json['payment_method']) ?? 'other',
-      paymentDate: _nullableDate(json['payment_date']),
+      displayName: memberName,
+      subtitle: member?.membershipNumber == null
+          ? 'Manual dues record'
+          : 'Manual dues record • Member #${member!.membershipNumber}',
+      sortDate: paymentDate ?? createdAt,
+      bucket: 'manual',
+      paymentDate: paymentDate,
       referenceNumber: _nullableString(json['reference_number']),
       termStart: _nullableDate(json['term_start']),
       termEnd: _nullableDate(json['term_end']),
@@ -1018,6 +1362,126 @@ class _PaymentRecord {
       receiptSentAt: _nullableDate(json['receipt_sent_at']),
     );
   }
+
+  factory _PaymentRecord.fromMembershipApplicationJson(
+    Map<String, dynamic> json, {
+    Map<String, dynamic>? clubPayment,
+  }) {
+    final details = _nullableJsonMap(json['application_details']);
+    final membershipType = details?['membership_type'];
+    final checkPayment = details?['check_payment'];
+    final amountCents = membershipType is Map
+        ? _intValue(membershipType['checkout_amount_cents'])
+        : 0;
+    final currency = membershipType is Map
+        ? (_nullableString(membershipType['currency']) ?? 'usd')
+        : 'usd';
+    final paidCents = clubPayment == null
+        ? 0
+        : _intValue(clubPayment['amount_paid']);
+    final paymentStatus = _nullableString(json['payment_status']) ?? 'unpaid';
+    final checkSelected =
+        checkPayment is Map && checkPayment['selected'] == true;
+    final status = clubPayment == null
+        ? paymentStatus
+        : (_nullableString(clubPayment['status']) ?? paymentStatus);
+    final method = checkSelected
+        ? 'check'
+        : (_nullableString(clubPayment?['payment_method']) ??
+              _nullableString(details?['payment_method']) ??
+              'membership_due');
+    final submittedAt =
+        _nullableDate(json['submitted_at']) ??
+        _nullableDate(json['created_at']) ??
+        DateTime.now();
+    final firstName = _nullableString(json['first_name']) ?? '';
+    final lastName = _nullableString(json['last_name']) ?? '';
+    final showingName = _nullableString(json['showing_name']);
+    final fullName = '$firstName $lastName'.trim();
+    final displayName = showingName == null || showingName.isEmpty
+        ? (fullName.isEmpty ? 'Membership Application' : fullName)
+        : showingName;
+
+    return _PaymentRecord(
+      id: json['id'].toString(),
+      amountDue: amountCents / 100,
+      amountPaid: paidCents / 100,
+      currency: currency,
+      status: status,
+      paymentMethod: method,
+      displayName: displayName,
+      subtitle:
+          'Membership application • ${_titleCase(_nullableString(json['status']) ?? 'pending')}',
+      sourceType: 'membership_due',
+      sourceId: json['id'].toString(),
+      sortDate: submittedAt,
+      bucket: checkSelected && status != 'paid' ? 'pending_check' : 'online',
+      paymentDate: _nullableDate(clubPayment?['recorded_at']),
+      referenceNumber:
+          _nullableString(clubPayment?['reference_number']) ??
+          _nullableString(clubPayment?['stripe_payment_intent_id']),
+      notes: _nullableString(json['applicant_message']),
+    );
+  }
+
+  factory _PaymentRecord.fromClubPaymentJson(Map<String, dynamic> json) {
+    final sourceType = _nullableString(json['source_type']);
+    final sourceId = _nullableString(json['source_id']);
+    final amountTotal = _intValue(json['amount_total']);
+    final amountPaid = _intValue(json['amount_paid']);
+    final status = _nullableString(json['status']) ?? 'pending';
+    final method = _nullableString(json['payment_method']) ?? 'online_card';
+    final createdAt =
+        _nullableDate(json['recorded_at']) ??
+        _nullableDate(json['created_at']) ??
+        DateTime.now();
+
+    return _PaymentRecord(
+      id: json['id'].toString(),
+      amountDue: amountTotal / 100,
+      amountPaid: amountPaid / 100,
+      currency: _nullableString(json['currency']) ?? 'usd',
+      status: status,
+      paymentMethod: method,
+      displayName: _titleCase(sourceType ?? 'Club Payment'),
+      subtitle: sourceId == null ? null : 'Source ID: $sourceId',
+      sourceType: sourceType,
+      sourceId: sourceId,
+      sortDate: createdAt,
+      bucket: method.contains('check') ? 'pending_check' : 'online',
+      paymentDate: _nullableDate(json['recorded_at']),
+      referenceNumber:
+          _nullableString(json['reference_number']) ??
+          _nullableString(json['stripe_payment_intent_id']),
+      notes: _nullableString(json['notes']),
+    );
+  }
+}
+
+class _PaymentRecipient {
+  const _PaymentRecipient({
+    required this.name,
+    this.userId,
+    this.email,
+    this.treasurerMailingAddress,
+  });
+
+  final String name;
+  final String? userId;
+  final String? email;
+  final String? treasurerMailingAddress;
+}
+
+Map<String, dynamic>? _nullableJsonMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return null;
+}
+
+int _intValue(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 class _MemberOption {
@@ -1093,8 +1557,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -1107,10 +1571,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _PaymentDetail extends StatelessWidget {
-  const _PaymentDetail({
-    required this.icon,
-    required this.text,
-  });
+  const _PaymentDetail({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1149,8 +1610,7 @@ class _ResponsiveFields extends StatelessWidget {
           spacing: 12,
           runSpacing: 14,
           children: [
-            for (final child in children)
-              SizedBox(width: width, child: child),
+            for (final child in children) SizedBox(width: width, child: child),
           ],
         );
       },
@@ -1216,8 +1676,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1259,9 +1719,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -1321,11 +1781,9 @@ String _titleCase(String value) {
       )
       .join(' ');
 }
+
 class _LockedAddOnState extends StatelessWidget {
-  const _LockedAddOnState({
-    required this.clubName,
-    required this.onRefresh,
-  });
+  const _LockedAddOnState({required this.clubName, required this.onRefresh});
 
   final String clubName;
   final VoidCallback onRefresh;
@@ -1356,8 +1814,8 @@ class _LockedAddOnState extends StatelessWidget {
                     'Membership Management Add-on Required',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(

@@ -13,6 +13,7 @@ class ClubSummary {
     this.roleName,
     this.membershipId,
     this.membershipStatus,
+    this.sanctionRequestsEnabled,
   });
 
   final String clubId;
@@ -26,6 +27,7 @@ class ClubSummary {
   final String? roleName;
   final String? membershipId;
   final String? membershipStatus;
+  final bool? sanctionRequestsEnabled;
 
   bool get isStaff => relationshipType == 'staff';
 
@@ -36,6 +38,8 @@ class ClubSummary {
   bool get canManageClub => isStaff;
 
   bool get hasMembership => membershipId != null;
+
+  bool get canRequestSanction => sanctionRequestsEnabled ?? true;
 
   String get displayName {
     final shortName = clubShortName?.trim();
@@ -58,6 +62,9 @@ class ClubSummary {
       roleName: _nullableString(json['role_name']),
       membershipId: _nullableString(json['membership_id']),
       membershipStatus: _nullableString(json['membership_status']),
+      sanctionRequestsEnabled: _nullableBool(
+        json['sanction_requests_addon_enabled'],
+      ),
     );
   }
 
@@ -74,6 +81,7 @@ class ClubSummary {
       'role_name': roleName,
       'membership_id': membershipId,
       'membership_status': membershipStatus,
+      'sanction_requests_addon_enabled': sanctionRequestsEnabled,
     };
   }
 
@@ -95,23 +103,30 @@ class ClubSummary {
     bool clearMembershipId = false,
     String? membershipStatus,
     bool clearMembershipStatus = false,
+    bool? sanctionRequestsEnabled,
+    bool clearSanctionRequestsEnabled = false,
   }) {
     return ClubSummary(
       clubId: clubId ?? this.clubId,
       clubName: clubName ?? this.clubName,
-      clubShortName:
-          clearClubShortName ? null : clubShortName ?? this.clubShortName,
+      clubShortName: clearClubShortName
+          ? null
+          : clubShortName ?? this.clubShortName,
       clubSlug: clubSlug ?? this.clubSlug,
       clubType: clubType ?? this.clubType,
       logoUrl: clearLogoUrl ? null : logoUrl ?? this.logoUrl,
       relationshipType: relationshipType ?? this.relationshipType,
       roleKey: clearRoleKey ? null : roleKey ?? this.roleKey,
       roleName: clearRoleName ? null : roleName ?? this.roleName,
-      membershipId:
-          clearMembershipId ? null : membershipId ?? this.membershipId,
+      membershipId: clearMembershipId
+          ? null
+          : membershipId ?? this.membershipId,
       membershipStatus: clearMembershipStatus
           ? null
           : membershipStatus ?? this.membershipStatus,
+      sanctionRequestsEnabled: clearSanctionRequestsEnabled
+          ? null
+          : sanctionRequestsEnabled ?? this.sanctionRequestsEnabled,
     );
   }
 
@@ -138,10 +153,7 @@ class ClubSummary {
         ')';
   }
 
-  static String _requiredString(
-    Map<String, dynamic> json,
-    String key,
-  ) {
+  static String _requiredString(Map<String, dynamic> json, String key) {
     final value = _nullableString(json[key]);
     if (value == null) {
       throw FormatException('Missing or empty required field: $key');
@@ -153,5 +165,21 @@ class ClubSummary {
     if (value == null) return null;
     final text = value.toString().trim();
     return text.isEmpty ? null : text;
+  }
+
+  static bool? _nullableBool(dynamic value) {
+    if (value == null) return null;
+    if (value is bool) return value;
+
+    final text = value.toString().trim().toLowerCase();
+    if (text.isEmpty) return null;
+    if (text == 'true' || text == 't' || text == '1' || text == 'yes') {
+      return true;
+    }
+    if (text == 'false' || text == 'f' || text == '0' || text == 'no') {
+      return false;
+    }
+
+    return null;
   }
 }

@@ -1,17 +1,13 @@
-
-
 // lib/screens/clubs/admin/club_communications_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../theme/app_theme.dart';
 
 class ClubCommunicationsScreen extends StatefulWidget {
-  const ClubCommunicationsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubCommunicationsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -22,31 +18,21 @@ class ClubCommunicationsScreen extends StatefulWidget {
 
 class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
   final _supabase = Supabase.instance.client;
-  final _searchController = TextEditingController();
 
   bool _isLoading = true;
-  String? _errorMessage;
-  String _statusFilter = 'all';
   bool _emailAddonEnabled = false;
-  List<_CommunicationRecord> _communications = const [];
+  String? _replyToEmail;
+  String? _senderName;
+  String? _errorMessage;
+
   List<_CommunicationTemplate> _templates = const [];
+  List<_CommunicationBatch> _batches = const [];
+  List<_CommunicationRecord> _communications = const [];
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_handleSearchChanged);
     _loadData();
-  }
-
-  @override
-  void dispose() {
-    _searchController.removeListener(_handleSearchChanged);
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _handleSearchChanged() {
-    if (mounted) setState(() {});
   }
 
   Future<void> _loadData() async {
@@ -58,58 +44,74 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
     try {
       final responses = await Future.wait([
         _supabase
-            .from('club_communications')
+            .from('clubs')
             .select(
-              'id,club_id,subject,message,recipient_group,channel,status,'
-              'email_status,scheduled_at,published_at,sent_at,last_error,'
-              'recipient_count,failed_count,created_at,updated_at',
+              'email_addon_enabled,communication_reply_to_email,'
+              'communication_sender_name',
+            )
+            .eq('id', widget.club.clubId)
+            .single(),
+        _supabase
+            .from('club_communication_templates')
+            .select(
+              'id,club_id,template_key,name,description,subject,body,message,'
+              'channel_default,is_system_default,is_enabled,updated_at',
+            )
+            .or('club_id.is.null,club_id.eq.${widget.club.clubId}')
+            .order('is_system_default', ascending: false)
+            .order('name', ascending: true),
+        _supabase
+            .from('club_communication_batches')
+            .select(
+              'id,club_id,message_kind,template_key,subject,body,audience_type,'
+              'recipient_count,notification_count,email_count,status,created_by,'
+              'sent_at,created_at,updated_at',
             )
             .eq('club_id', widget.club.clubId)
             .order('created_at', ascending: false),
         _supabase
-            .from('club_communication_templates')
+            .from('club_communications')
             .select(
-              'id,club_id,name,template_key,subject,message,is_active,created_at',
+              'id,club_id,batch_id,template_key,message_kind,related_type,'
+              'related_id,recipient_user_id,recipient_email,recipient_name,'
+              'channel,subject,body,message,status,sent_at,read_at,failed_at,'
+              'error_message,created_by,created_at,updated_at',
             )
             .eq('club_id', widget.club.clubId)
-            .order('name', ascending: true),
-        _supabase
-            .from('clubs')
-            .select('email_addon_enabled')
-            .eq('id', widget.club.clubId)
-            .single(),
+            .order('created_at', ascending: false),
       ]);
 
-      final communicationRows = responses[0] as List;
+      final clubRow = Map<String, dynamic>.from(responses[0] as Map);
       final templateRows = responses[1] as List;
-      final clubRow = Map<String, dynamic>.from(responses[2] as Map);
-      final emailAddonEnabled = clubRow['email_addon_enabled'] == true;
+      final batchRows = responses[2] as List;
+      final communicationRows = responses[3] as List;
 
       if (!mounted) return;
-
       setState(() {
-        _emailAddonEnabled = emailAddonEnabled;
+        _emailAddonEnabled = clubRow['email_addon_enabled'] == true;
+        _replyToEmail = _nullableString(
+          clubRow['communication_reply_to_email'],
+        );
+        _senderName = _nullableString(clubRow['communication_sender_name']);
+        _templates = _mergeTemplateDefaultsAndOverrides(templateRows);
+        _batches = batchRows
+            .whereType<Map>()
+            .map(
+              (row) =>
+                  _CommunicationBatch.fromJson(Map<String, dynamic>.from(row)),
+            )
+            .toList();
         _communications = communicationRows
             .whereType<Map>()
             .map(
-              (row) => _CommunicationRecord.fromJson(
-                Map<String, dynamic>.from(row),
-              ),
-            )
-            .toList();
-        _templates = templateRows
-            .whereType<Map>()
-            .map(
-              (row) => _CommunicationTemplate.fromJson(
-                Map<String, dynamic>.from(row),
-              ),
+              (row) =>
+                  _CommunicationRecord.fromJson(Map<String, dynamic>.from(row)),
             )
             .toList();
         _isLoading = false;
       });
     } catch (error) {
       if (!mounted) return;
-
       setState(() {
         _isLoading = false;
         _errorMessage = 'Unable to load communications: $error';
@@ -117,89 +119,112 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
     }
   }
 
-  List<_CommunicationRecord> get _filteredCommunications {
-    final query = _searchController.text.trim().toLowerCase();
+  List<_CommunicationTemplate> _mergeTemplateDefaultsAndOverrides(List rows) {
+    final byKey = <String, _CommunicationTemplate>{};
+    final customTemplates = <_CommunicationTemplate>[];
 
-    return _communications.where((record) {
-      final matchesStatus = _statusFilter == 'all' ||
-          record.status == _statusFilter ||
-          record.emailStatus == _statusFilter;
-      if (!matchesStatus) return false;
-      if (query.isEmpty) return true;
+    for (final row in rows.whereType<Map>()) {
+      final template = _CommunicationTemplate.fromJson(
+        Map<String, dynamic>.from(row),
+      );
+      final key = template.templateKey;
 
-      final searchable = [
-        record.subject,
-        record.message,
-        record.recipientGroup,
-        record.channel,
-        record.emailStatus,
-      ].join(' ').toLowerCase();
+      if (key == null || key.isEmpty) {
+        customTemplates.add(template);
+        continue;
+      }
 
-      return searchable.contains(query);
-    }).toList();
+      final existing = byKey[key];
+      if (existing == null ||
+          (existing.isSystemDefault && !template.isSystemDefault)) {
+        byKey[key] = template;
+      }
+    }
+
+    final templates = [...byKey.values, ...customTemplates]
+      ..sort((a, b) => a.name.compareTo(b.name));
+    return templates;
   }
 
-  int _countForStatus(String status) {
-    if (status == 'all') return _communications.length;
-    return _communications.where((record) => record.status == status).length;
-  }
-
-  Future<void> _openComposer({_CommunicationRecord? existing}) async {
+  Future<void> _openTemplateEditor({_CommunicationTemplate? template}) async {
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _CommunicationComposerDialog(
+      builder: (_) =>
+          _TemplateEditorDialog(clubId: widget.club.clubId, template: template),
+    );
+
+    if (changed == true) await _loadData();
+  }
+
+  Future<void> _openComposer({
+    _CommunicationTemplate? template,
+    String? messageKind,
+  }) async {
+    final composeTemplate = template?.canUseForManualCompose == true
+        ? template
+        : null;
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ComposerDialog(
         clubId: widget.club.clubId,
-        templates: _templates,
+        clubName: widget.club.clubName,
         emailAddonEnabled: _emailAddonEnabled,
-        existing: existing,
+        templates: _templates,
+        initialTemplate: composeTemplate,
+        initialMessageKind: messageKind,
       ),
     );
 
-    if (changed == true) {
-      await _loadData();
-    }
+    if (changed == true) await _loadData();
   }
 
-  Future<void> _openTemplates() async {
+  Future<void> _openSettings() async {
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _TemplateManagerDialog(
+      builder: (_) => _CommunicationSettingsDialog(
         clubId: widget.club.clubId,
-        templates: _templates,
+        emailAddonEnabled: _emailAddonEnabled,
+        senderName: _senderName,
+        replyToEmail: _replyToEmail,
       ),
     );
 
-    if (changed == true) {
-      await _loadData();
-    }
+    if (changed == true) await _loadData();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Communications'),
-        actions: [
-          IconButton(
-            tooltip: 'Manage Templates',
-            onPressed: _isLoading ? null : _openTemplates,
-            icon: const Icon(Icons.description_outlined),
+    return DefaultTabController(
+      length: 4,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Communications'),
+          actions: [
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _isLoading ? null : _loadData,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+          bottom: const TabBar(
+            isScrollable: false,
+            labelColor: AppColors.offWhite,
+            unselectedLabelColor: AppColors.clubLightText,
+            indicatorColor: AppColors.gold,
+            indicatorWeight: 3,
+            tabs: [
+              Tab(icon: Icon(Icons.edit_outlined), text: 'Compose'),
+              Tab(icon: Icon(Icons.description_outlined), text: 'Templates'),
+              Tab(icon: Icon(Icons.history_outlined), text: 'History'),
+              Tab(icon: Icon(Icons.settings_outlined), text: 'Settings'),
+            ],
           ),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _isLoading ? null : _loadData,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+        ),
+        body: _buildBody(),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openComposer(),
-        icon: const Icon(Icons.edit_outlined),
-        label: const Text('New Message'),
-      ),
-      body: _buildBody(),
     );
   }
 
@@ -208,7 +233,7 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_errorMessage != null && _communications.isEmpty) {
+    if (_errorMessage != null) {
       return _MessageState(
         icon: Icons.error_outline,
         title: 'Unable to load communications',
@@ -218,158 +243,312 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
       );
     }
 
-    final filtered = _filteredCommunications;
+    return TabBarView(
+      children: [
+        _ComposeTab(
+          clubName: widget.club.clubName,
+          emailAddonEnabled: _emailAddonEnabled,
+          templates: _templates,
+          onCompose: (template, messageKind) =>
+              _openComposer(template: template, messageKind: messageKind),
+        ),
+        _TemplatesTab(
+          clubName: widget.club.clubName,
+          templates: _templates,
+          onEdit: (template) => _openTemplateEditor(template: template),
+          onCreate: () => _openTemplateEditor(),
+          onUse: (template) => _openComposer(
+            template: template,
+            messageKind: template.templateKey == 'newsletter'
+                ? 'newsletter'
+                : 'custom_audience',
+          ),
+        ),
+        _HistoryTab(batches: _batches, communications: _communications),
+        _SettingsTab(
+          emailAddonEnabled: _emailAddonEnabled,
+          senderName: _senderName,
+          replyToEmail: _replyToEmail,
+          onEdit: _openSettings,
+        ),
+      ],
+    );
+  }
+}
 
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          Text(
-            widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Create member notices, communication records, and reusable templates. Email delivery is available as an add-on.',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth >= 760
-                  ? (constraints.maxWidth - 24) / 3
-                  : constraints.maxWidth;
+class _ComposeTab extends StatelessWidget {
+  const _ComposeTab({
+    required this.clubName,
+    required this.emailAddonEnabled,
+    required this.templates,
+    required this.onCompose,
+  });
 
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  SizedBox(
-                    width: width,
-                    child: _SummaryCard(
-                      icon: Icons.drafts_outlined,
-                      label: 'Drafts',
-                      value: _countForStatus('draft').toString(),
-                    ),
-                  ),
-                  SizedBox(
-                    width: width,
-                    child: _SummaryCard(
-                      icon: Icons.campaign_outlined,
-                      label: 'Published',
-                      value: _countForStatus('published').toString(),
-                    ),
-                  ),
-                  SizedBox(
-                    width: width,
-                    child: _SummaryCard(
-                      icon: Icons.outbox_outlined,
-                      label: 'Queued Email',
-                      value: _communications
-                          .where((record) => record.emailStatus == 'queued')
-                          .length
-                          .toString(),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          _EmailAddonNotice(enabled: _emailAddonEnabled),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              labelText: 'Search communications',
-              hintText: 'Subject, message, or recipient group',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: _searchController.clear,
-                      icon: const Icon(Icons.clear),
-                    ),
-              border: const OutlineInputBorder(),
+  final String clubName;
+  final bool emailAddonEnabled;
+  final List<_CommunicationTemplate> templates;
+  final Future<void> Function(
+    _CommunicationTemplate? template,
+    String? messageKind,
+  )
+  onCompose;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+      children: [
+        Text(
+          'Compose',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Send an individual message, club announcement, newsletter, or save a communication record for $clubName.',
+        ),
+        const SizedBox(height: 16),
+        _EmailAddonNotice(enabled: emailAddonEnabled),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _ComposeActionCard(
+              icon: Icons.person_outline,
+              title: 'Individual Message',
+              description:
+                  'Message one member, applicant, sanction contact, officer, or custom address.',
+              onTap: () => onCompose(null, 'custom_individual'),
             ),
-          ),
-          const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'all', label: Text('All')),
-                ButtonSegment(value: 'draft', label: Text('Drafts')),
-                ButtonSegment(value: 'published', label: Text('Published')),
-                ButtonSegment(value: 'queued', label: Text('Queued')),
-                ButtonSegment(value: 'failed', label: Text('Failed')),
-              ],
-              selected: {_statusFilter},
-              onSelectionChanged: (values) {
-                setState(() => _statusFilter = values.first);
-              },
+            _ComposeActionCard(
+              icon: Icons.groups_outlined,
+              title: 'Group Message',
+              description:
+                  'Send a notice to active members, pending applicants, staff, or another saved audience.',
+              onTap: () => onCompose(null, 'custom_audience'),
             ),
-          ),
-          const SizedBox(height: 16),
-          if (_errorMessage != null) ...[
-            Material(
-              color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Text(_errorMessage!),
+            _ComposeActionCard(
+              icon: Icons.newspaper_outlined,
+              title: 'Newsletter',
+              description:
+                  'Start from the newsletter template and send a longer club update.',
+              onTap: () => onCompose(
+                templates
+                    .where(
+                      (item) =>
+                          item.templateKey == 'newsletter' &&
+                          item.canUseForManualCompose,
+                    )
+                    .firstOrNull,
+                'newsletter',
               ),
             ),
-            const SizedBox(height: 16),
           ],
-          Text(
-            '${filtered.length} ${filtered.length == 1 ? 'message' : 'messages'}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 12),
-          if (_communications.isEmpty)
-            _InlineEmptyState(
-              title: 'No communications yet',
-              message:
-                  'Create an in-app member notice or communication record. Email delivery can be added later with the Email Add-on.',
-              actionLabel: 'Create Message',
-              onAction: () => _openComposer(),
-            )
-          else if (filtered.isEmpty)
-            const _InlineEmptyState(
-              title: 'No matching communications',
-              message: 'Try another search or status filter.',
-            )
-          else
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final useTwoColumns = constraints.maxWidth >= 900;
-                final width = useTwoColumns
-                    ? (constraints.maxWidth - 12) / 2
-                    : constraints.maxWidth;
+        ),
+      ],
+    );
+  }
+}
 
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    for (final record in filtered)
-                      SizedBox(
-                        width: width,
-                        child: _CommunicationCard(
-                          record: record,
-                          onEdit: () => _openComposer(existing: record),
-                        ),
-                      ),
-                  ],
-                );
-              },
+class _ComposeActionCard extends StatelessWidget {
+  const _ComposeActionCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 840;
+    return SizedBox(
+      width: wide ? 260 : double.infinity,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(child: Icon(icon)),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(description),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplatesTab extends StatelessWidget {
+  const _TemplatesTab({
+    required this.clubName,
+    required this.templates,
+    required this.onEdit,
+    required this.onCreate,
+    required this.onUse,
+  });
+
+  final String clubName;
+  final List<_CommunicationTemplate> templates;
+  final ValueChanged<_CommunicationTemplate> onEdit;
+  final VoidCallback onCreate;
+  final ValueChanged<_CommunicationTemplate> onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Templates',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Edit club-specific message templates. System defaults stay available and can be customized per club.',
+                  ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: onCreate,
+              icon: const Icon(Icons.add),
+              label: const Text('New'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (templates.isEmpty)
+          _InlineEmptyState(
+            title: 'No templates',
+            message:
+                'Run the communication template seed to load the default system templates.',
+            actionLabel: 'Create Template',
+            onAction: onCreate,
+          )
+        else ...[
+          _TemplateSection(
+            clubName: clubName,
+            title: 'Membership',
+            templates: templates
+                .where(
+                  (template) =>
+                      template.templateKey?.startsWith('membership_') == true,
+                )
+                .toList(),
+            onEdit: onEdit,
+            onUse: onUse,
+          ),
+          _TemplateSection(
+            clubName: clubName,
+            title: 'Sanction Requests',
+            templates: templates
+                .where(
+                  (template) =>
+                      template.templateKey?.startsWith('sanction_') == true,
+                )
+                .toList(),
+            onEdit: onEdit,
+            onUse: onUse,
+          ),
+          _TemplateSection(
+            clubName: clubName,
+            title: 'Payments & Reminders',
+            templates: templates
+                .where(
+                  (template) =>
+                      template.templateKey == 'payment_received' ||
+                      template.templateKey == 'pending_check_reminder',
+                )
+                .toList(),
+            onEdit: onEdit,
+            onUse: onUse,
+          ),
+          _TemplateSection(
+            clubName: clubName,
+            title: 'General Club Communications',
+            templates: templates
+                .where(
+                  (template) =>
+                      template.templateKey == 'club_announcement' ||
+                      template.templateKey == 'newsletter' ||
+                      template.templateKey == null ||
+                      template.templateKey!.isEmpty,
+                )
+                .toList(),
+            onEdit: onEdit,
+            onUse: onUse,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _TemplateSection extends StatelessWidget {
+  const _TemplateSection({
+    required this.clubName,
+    required this.title,
+    required this.templates,
+    required this.onEdit,
+    required this.onUse,
+  });
+
+  final String clubName;
+  final String title;
+  final List<_CommunicationTemplate> templates;
+  final ValueChanged<_CommunicationTemplate> onEdit;
+  final ValueChanged<_CommunicationTemplate> onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    if (templates.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          for (final template in templates)
+            _TemplateCard(
+              clubName: clubName,
+              template: template,
+              onEdit: () => onEdit(template),
+              onUse: () => onUse(template),
             ),
         ],
       ),
@@ -377,328 +556,832 @@ class _ClubCommunicationsScreenState extends State<ClubCommunicationsScreen> {
   }
 }
 
-class _CommunicationCard extends StatelessWidget {
-  const _CommunicationCard({
-    required this.record,
+class _TemplateCard extends StatelessWidget {
+  const _TemplateCard({
+    required this.clubName,
+    required this.template,
     required this.onEdit,
+    required this.onUse,
   });
 
-  final _CommunicationRecord record;
+  final String clubName;
+  final _CommunicationTemplate template;
   final VoidCallback onEdit;
+  final VoidCallback onUse;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final statusColor = _statusColor(record.status, scheme);
-
     return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onEdit,
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    child: Icon(
-                      record.usesEmail
-                          ? Icons.mark_email_read_outlined
-                          : Icons.campaign_outlined,
-                    ),
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  child: Icon(
+                    template.channelDefault == 'email'
+                        ? Icons.email_outlined
+                        : Icons.campaign_outlined,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          record.subject,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                        ),
-                        Text(
-                          '${_titleCase(record.recipientGroup)} • ${record.channelLabel}',
-                        ),
-                      ],
-                    ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        template.name,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(_renderPreviewText(template.subject, clubName)),
+                    ],
                   ),
-                  IconButton(
-                    tooltip: 'Open message',
-                    onPressed: onEdit,
-                    icon: const Icon(Icons.open_in_new),
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'edit') onEdit();
+                    if (value == 'use') onUse();
+                  },
+                  itemBuilder: (_) => [
+                    if (template.canUseForManualCompose)
+                      const PopupMenuItem(
+                        value: 'use',
+                        child: Text('Use Template'),
+                      ),
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Customize'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(
+                  avatar: Icon(
+                    template.isSystemDefault
+                        ? Icons.public_outlined
+                        : Icons.edit_outlined,
+                    size: 18,
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  Chip(
-                    label: Text(_titleCase(record.status)),
-                    backgroundColor: statusColor.withAlpha(40),
-                    side: BorderSide(color: statusColor),
+                  label: Text(
+                    template.isSystemDefault
+                        ? 'RingMaster Default'
+                        : 'Club Custom',
                   ),
-                  Chip(
-                    avatar: Icon(
-                      record.usesEmail
-                          ? Icons.email_outlined
-                          : Icons.campaign_outlined,
-                      size: 18,
-                    ),
-                    label: Text(record.channelLabel),
+                ),
+                Chip(label: Text(_titleCase(template.channelDefault))),
+                if (!template.isEnabled)
+                  const Chip(
+                    avatar: Icon(Icons.block_outlined, size: 18),
+                    label: Text('Disabled'),
                   ),
-                  if (record.usesEmail)
-                    Chip(
-                      avatar: const Icon(Icons.outbox_outlined, size: 18),
-                      label: Text('Email ${_titleCase(record.emailStatus)}'),
-                    ),
-                  if (record.recipientCount != null)
-                    Chip(
-                      avatar: const Icon(Icons.people_outline, size: 18),
-                      label: Text('${record.recipientCount} recipients'),
-                    ),
-                  if (record.failedCount > 0)
-                    Chip(
-                      avatar: const Icon(Icons.error_outline, size: 18),
-                      label: Text('${record.failedCount} failed'),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                record.messagePreview,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 12),
-              if (record.scheduledAt != null)
-                _DetailRow(
-                  icon: Icons.schedule_outlined,
-                  text: 'Scheduled ${_formatDateTime(record.scheduledAt!)}',
-                ),
-              if (record.publishedAt != null)
-                _DetailRow(
-                  icon: Icons.campaign_outlined,
-                  text: 'Published ${_formatDateTime(record.publishedAt!)}',
-                ),
-              if (record.sentAt != null)
-                _DetailRow(
-                  icon: Icons.send_outlined,
-                  text: 'Sent ${_formatDateTime(record.sentAt!)}',
-                ),
-              if (record.lastError != null)
-                _DetailRow(
-                  icon: Icons.error_outline,
-                  text: 'Last error: ${record.lastError}',
-                ),
-              if (record.scheduledAt == null &&
-                  record.publishedAt == null &&
-                  record.sentAt == null)
-                _DetailRow(
-                  icon: Icons.edit_calendar_outlined,
-                  text: 'Created ${_formatDateTime(record.createdAt)}',
-                ),
+              ],
+            ),
+            if (template.description != null) ...[
+              const SizedBox(height: 10),
+              Text(template.description!),
             ],
+            const SizedBox(height: 10),
+            Text(
+              _renderPreviewText(template.bodyPreview, clubName),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryTab extends StatefulWidget {
+  const _HistoryTab({required this.batches, required this.communications});
+
+  final List<_CommunicationBatch> batches;
+  final List<_CommunicationRecord> communications;
+
+  @override
+  State<_HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<_HistoryTab> {
+  final _searchController = TextEditingController();
+  String _statusFilter = 'all';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
+  List<_CommunicationBatch> get _filteredBatches {
+    final query = _searchController.text.trim().toLowerCase();
+
+    return widget.batches.where((batch) {
+      final matchesStatus =
+          _statusFilter == 'all' || batch.status == _statusFilter;
+      if (!matchesStatus) return false;
+      if (query.isEmpty) return true;
+
+      return [
+        batch.subject,
+        batch.body,
+        batch.messageKind,
+        batch.audienceType,
+      ].join(' ').toLowerCase().contains(query);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filteredBatches;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+      children: [
+        Text(
+          'History',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Review communication batches and individual delivery records.',
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            labelText: 'Search history',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear',
+                    onPressed: _searchController.clear,
+                    icon: const Icon(Icons.clear),
+                  ),
+            border: const OutlineInputBorder(),
           ),
+        ),
+        const SizedBox(height: 12),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SegmentedButton<String>(
+            selected: {_statusFilter},
+            segments: const [
+              ButtonSegment(value: 'all', label: Text('All')),
+              ButtonSegment(value: 'draft', label: Text('Draft')),
+              ButtonSegment(value: 'queued', label: Text('Queued')),
+              ButtonSegment(value: 'sent', label: Text('Sent')),
+              ButtonSegment(value: 'partial', label: Text('Partial')),
+              ButtonSegment(value: 'failed', label: Text('Failed')),
+            ],
+            onSelectionChanged: (values) {
+              setState(() => _statusFilter = values.first);
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          '${filtered.length} ${filtered.length == 1 ? 'batch' : 'batches'}',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        if (widget.batches.isEmpty && widget.communications.isEmpty)
+          const _InlineEmptyState(
+            title: 'No communication history yet',
+            message:
+                'Messages, notifications, email attempts, and system notices will appear here.',
+          )
+        else if (filtered.isEmpty)
+          const _InlineEmptyState(
+            title: 'No matching history',
+            message: 'Try another search or status filter.',
+          )
+        else
+          for (final batch in filtered) _HistoryBatchCard(batch: batch),
+        if (widget.communications.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Text(
+            'Individual Records',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          for (final record in widget.communications.take(25))
+            _CommunicationRecordTile(record: record),
+        ],
+      ],
+    );
+  }
+}
+
+class _HistoryBatchCard extends StatelessWidget {
+  const _HistoryBatchCard({required this.batch});
+
+  final _CommunicationBatch batch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(child: Icon(_kindIcon(batch.messageKind))),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        batch.subject,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_titleCase(batch.messageKind)} • ${_titleCase(batch.audienceType ?? 'audience')}',
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(label: Text(_titleCase(batch.status))),
+                Chip(label: Text('${batch.recipientCount} recipients')),
+                Chip(label: Text('${batch.notificationCount} notifications')),
+                Chip(label: Text('${batch.emailCount} emails')),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(batch.preview, maxLines: 3, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 10),
+            _DetailRow(
+              icon: Icons.schedule_outlined,
+              text: batch.sentAt == null
+                  ? 'Created ${_formatDateTime(batch.createdAt)}'
+                  : 'Sent ${_formatDateTime(batch.sentAt!)}',
+            ),
+          ],
         ),
       ),
     );
   }
 
-  static Color _statusColor(String status, ColorScheme scheme) {
-    switch (status) {
-      case 'published':
-      case 'sent':
-        return scheme.primary;
-      case 'queued':
-      case 'scheduled':
-        return scheme.tertiary;
-      case 'failed':
-        return scheme.error;
+  IconData _kindIcon(String kind) {
+    switch (kind) {
+      case 'newsletter':
+        return Icons.newspaper_outlined;
+      case 'custom_individual':
+        return Icons.person_outline;
+      case 'custom_audience':
+        return Icons.groups_outlined;
       default:
-        return scheme.outline;
+        return Icons.campaign_outlined;
     }
   }
 }
 
-class _CommunicationComposerDialog extends StatefulWidget {
-  const _CommunicationComposerDialog({
-    required this.clubId,
-    required this.templates,
+class _CommunicationRecordTile extends StatelessWidget {
+  const _CommunicationRecordTile({required this.record});
+
+  final _CommunicationRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Icon(
+          record.channel == 'email'
+              ? Icons.email_outlined
+              : Icons.notifications_outlined,
+        ),
+        title: Text(record.subject),
+        subtitle: Text(
+          [
+            record.recipientName,
+            record.recipientEmail,
+            _titleCase(record.status),
+          ].whereType<String>().join(' • '),
+        ),
+        trailing: record.sentAt == null
+            ? null
+            : Text(_formatDateTime(record.sentAt!)),
+      ),
+    );
+  }
+}
+
+class _SettingsTab extends StatelessWidget {
+  const _SettingsTab({
     required this.emailAddonEnabled,
-    this.existing,
+    required this.senderName,
+    required this.replyToEmail,
+    required this.onEdit,
+  });
+
+  final bool emailAddonEnabled;
+  final String? senderName;
+  final String? replyToEmail;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Settings',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Configure sender details and review email add-on availability.',
+                  ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _EmailAddonNotice(enabled: emailAddonEnabled),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _DetailRow(
+                  icon: Icons.badge_outlined,
+                  text: 'Sender name: ${senderName ?? 'Club default'}',
+                ),
+                _DetailRow(
+                  icon: Icons.reply_outlined,
+                  text: 'Reply-to email: ${replyToEmail ?? 'Not set'}',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ComposerDialog extends StatefulWidget {
+  const _ComposerDialog({
+    required this.clubId,
+    required this.clubName,
+    required this.emailAddonEnabled,
+    required this.templates,
+    this.initialTemplate,
+    this.initialMessageKind,
   });
 
   final String clubId;
-  final List<_CommunicationTemplate> templates;
+  final String clubName;
   final bool emailAddonEnabled;
-  final _CommunicationRecord? existing;
+  final List<_CommunicationTemplate> templates;
+  final _CommunicationTemplate? initialTemplate;
+  final String? initialMessageKind;
 
   @override
-  State<_CommunicationComposerDialog> createState() =>
-      _CommunicationComposerDialogState();
+  State<_ComposerDialog> createState() => _ComposerDialogState();
 }
 
-class _CommunicationComposerDialogState
-    extends State<_CommunicationComposerDialog> {
+class _ComposerDialogState extends State<_ComposerDialog> {
   final _formKey = GlobalKey<FormState>();
   final _supabase = Supabase.instance.client;
+  final _subjectController = TextEditingController();
+  final _bodyController = TextEditingController();
+  final _recipientNameController = TextEditingController();
+  final _recipientEmailController = TextEditingController();
+  final _recipientSearchController = TextEditingController();
 
-  late final TextEditingController _subjectController;
-  late final TextEditingController _messageController;
-  late final TextEditingController _scheduledAtController;
+  List<_MemberRecipientOption> _recipientOptions = const [];
+  bool _isLoadingRecipients = false;
+  String? _recipientLoadError;
+  String? _selectedRecipientMembershipId;
+  String? _selectedRecipientUserId;
 
-  late String _recipientGroup;
-  late String _channel;
-  String? _templateId;
+  String _messageKind = 'custom_audience';
+  String _audienceType = 'active_members';
+  String _channel = 'notification';
+  String? _templateKey;
   bool _isSaving = false;
   String? _errorMessage;
-
-  bool get _editingEmailCommunicationWithoutAddon {
-    final existing = widget.existing;
-    if (existing == null || widget.emailAddonEnabled) return false;
-    return existing.usesEmail;
-  }
 
   @override
   void initState() {
     super.initState();
-    final existing = widget.existing;
-
-    _subjectController = TextEditingController(text: existing?.subject ?? '');
-    _messageController = TextEditingController(text: existing?.message ?? '');
-    _scheduledAtController = TextEditingController(
-      text: existing?.scheduledAt == null
-          ? ''
-          : _dateTimeText(existing!.scheduledAt!),
-    );
-
-    _recipientGroup = existing?.recipientGroup ?? 'active_members';
-    _channel = existing?.channel ?? 'in_app';
-    if (!widget.emailAddonEnabled &&
-        _channel != 'in_app' &&
-        existing == null) {
-      _channel = 'in_app';
-    }
+    _messageKind = widget.initialMessageKind ?? _messageKind;
+    _applyTemplate(widget.initialTemplate);
+    _loadActiveMemberRecipients();
   }
 
   @override
   void dispose() {
     _subjectController.dispose();
-    _messageController.dispose();
-    _scheduledAtController.dispose();
+    _bodyController.dispose();
+    _recipientNameController.dispose();
+    _recipientEmailController.dispose();
+    _recipientSearchController.dispose();
     super.dispose();
   }
 
-  void _applyTemplate(String? templateId) {
-    setState(() => _templateId = templateId);
-    if (templateId == null) return;
-
-    final template = widget.templates
-        .where((item) => item.id == templateId)
-        .firstOrNull;
-
+  void _applyTemplate(_CommunicationTemplate? template) {
     if (template == null) return;
-
-    _subjectController.text = template.subject;
-    _messageController.text = template.message;
+    _templateKey = template.templateKey;
+    _subjectController.text = _renderComposerTemplate(template.subject);
+    _bodyController.text = _renderComposerTemplate(template.body);
+    _channel = template.channelDefault;
+    if (_channel != 'notification' && !widget.emailAddonEnabled) {
+      _channel = 'notification';
+    }
+    if (template.templateKey == 'newsletter') {
+      _messageKind = 'newsletter';
+      _audienceType = 'active_members';
+    }
   }
 
-  Future<void> _save({required bool publishNow}) async {
+  String _renderComposerTemplate(String value) {
+    final recipientLabel = _messageKind == 'custom_individual'
+        ? _nullIfBlank(_recipientNameController.text) ?? 'Recipient Name'
+        : '{{recipient_name}}';
+
+    return value
+        .replaceAll('{{club_name}}', widget.clubName)
+        .replaceAll('{{recipient_name}}', recipientLabel)
+        .replaceAll('{{membership_type}}', 'Membership Type')
+        .replaceAll('{{amount_due}}', 'Amount Due')
+        .replaceAll('{{amount_paid}}', 'Amount Paid')
+        .replaceAll('{{payment_method}}', 'Payment Method')
+        .replaceAll('{{staff_message}}', 'Write the staff message here.')
+        .replaceAll('{{requesting_club_name}}', 'Requesting Club')
+        .replaceAll('{{show_date}}', 'Show Date')
+        .replaceAll('{{contact_name}}', 'Contact Name')
+        .replaceAll('{{request_scope}}', 'Request Scope')
+        .replaceAll(
+          '{{treasurer_mailing_address}}',
+          'Treasurer Mailing Address',
+        )
+        .replaceAll('{{message_body}}', 'Write your message here.');
+  }
+
+  String _audienceLabel(String value) {
+    switch (value) {
+      case 'expired_members':
+        return 'Expired Membership';
+      case 'pending_applicants':
+        return 'Pending Applicants';
+      case 'unpaid_members':
+        return 'Members With Unpaid Dues';
+      case 'staff':
+        return 'Club Board';
+      case 'active_members':
+      default:
+        return 'Active Members';
+    }
+  }
+
+  Future<void> _loadActiveMemberRecipients() async {
+    setState(() {
+      _isLoadingRecipients = true;
+      _recipientLoadError = null;
+    });
+
+    try {
+      final rows = await _supabase
+          .from('club_memberships')
+          .select('id,user_id,first_name,last_name,email,status')
+          .eq('club_id', widget.clubId)
+          .order('last_name', ascending: true)
+          .order('first_name', ascending: true);
+
+      final recipients = rows
+          .whereType<Map>()
+          .map(
+            (row) =>
+                _MemberRecipientOption.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .where((member) => member.isActive)
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _recipientOptions = recipients;
+        _isLoadingRecipients = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecipients = false;
+        _recipientLoadError = 'Unable to load active members: $error';
+      });
+    }
+  }
+
+  void _selectRecipient(_MemberRecipientOption option) {
+    setState(() {
+      _selectedRecipientMembershipId = option.id;
+      _selectedRecipientUserId = option.userId;
+    });
+    _recipientSearchController.text = option.displayLabel;
+    _recipientNameController.text = option.fullName;
+    _recipientEmailController.text = option.email ?? '';
+  }
+
+  Future<List<_MemberRecipientOption>> _loadRecipientsForAudience(
+    String audienceType,
+  ) async {
+    if (audienceType == 'pending_applicants') {
+      return _loadPendingApplicantRecipients();
+    }
+    if (audienceType == 'staff') {
+      return _loadStaffRecipients();
+    }
+    if (audienceType == 'unpaid_members') {
+      return _loadUnpaidRecipients();
+    }
+
+    final rows = await _supabase
+        .from('club_memberships')
+        .select('id,user_id,first_name,last_name,email,status')
+        .eq('club_id', widget.clubId)
+        .order('last_name', ascending: true)
+        .order('first_name', ascending: true);
+
+    final members = rows
+        .whereType<Map>()
+        .map(
+          (row) =>
+              _MemberRecipientOption.fromJson(Map<String, dynamic>.from(row)),
+        )
+        .toList();
+
+    switch (audienceType) {
+      case 'expired_members':
+        return members.where((member) => member.isExpired).toList();
+      case 'active_members':
+      default:
+        return members.where((member) => member.isActive).toList();
+    }
+  }
+
+  Future<List<_MemberRecipientOption>> _loadPendingApplicantRecipients() async {
+    final rows = await _supabase
+        .from('club_membership_applications')
+        .select('id,user_id,first_name,last_name,email,status')
+        .eq('club_id', widget.clubId)
+        .inFilter('status', ['pending', 'needs_information'])
+        .order('created_at', ascending: false);
+
+    return rows
+        .whereType<Map>()
+        .map(
+          (row) => _MemberRecipientOption.fromJson(
+            Map<String, dynamic>.from(row),
+            relatedType: 'membership_application',
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<_MemberRecipientOption>> _loadUnpaidRecipients() async {
+    final responses = await Future.wait([
+      _supabase
+          .from('club_memberships')
+          .select('id,user_id,first_name,last_name,email,status')
+          .eq('club_id', widget.clubId)
+          .order('last_name', ascending: true)
+          .order('first_name', ascending: true),
+      _supabase
+          .from('club_membership_applications')
+          .select('id,user_id,first_name,last_name,email,status,payment_status')
+          .eq('club_id', widget.clubId)
+          .inFilter('payment_status', ['unpaid', 'pending', 'pending_check'])
+          .order('created_at', ascending: false),
+    ]);
+
+    final members = (responses[0] as List)
+        .whereType<Map>()
+        .map(
+          (row) =>
+              _MemberRecipientOption.fromJson(Map<String, dynamic>.from(row)),
+        )
+        .where((member) => member.isUnpaid)
+        .toList();
+
+    final applications = (responses[1] as List)
+        .whereType<Map>()
+        .map(
+          (row) => _MemberRecipientOption.fromJson(
+            Map<String, dynamic>.from(row),
+            relatedType: 'membership_application',
+          ),
+        )
+        .toList();
+
+    return [...members, ...applications];
+  }
+
+  Future<List<_MemberRecipientOption>> _loadStaffRecipients() async {
+    final response = await _supabase.rpc(
+      'get_club_staff_permissions_dashboard',
+      params: {'p_club_id': widget.clubId},
+    );
+    if (response is! Map) return const [];
+    final staffRows = response['staff'];
+    if (staffRows is! List) return const [];
+
+    return staffRows
+        .whereType<Map>()
+        .map(
+          (row) => _MemberRecipientOption.fromStaffJson(
+            Map<String, dynamic>.from(row),
+          ),
+        )
+        .where((recipient) => recipient.isStaffActive)
+        .toList();
+  }
+
+  String _renderForRecipient(String value, String recipientName) {
+    return value
+        .replaceAll('{{club_name}}', widget.clubName)
+        .replaceAll('{{recipient_name}}', recipientName)
+        .replaceAll('[Recipient Name]', recipientName)
+        .replaceAll('(Name)', recipientName);
+  }
+
+  Future<void> _save({required bool sendNow}) async {
     if (_isSaving) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final scheduledAt = _parseDateTime(_scheduledAtController.text);
     final usesEmail = _channel == 'email' || _channel == 'both';
-
     if (usesEmail && !widget.emailAddonEnabled) {
       setState(() {
-        _errorMessage = _editingEmailCommunicationWithoutAddon
-            ? 'This message used email delivery, but the Email Add-on is no longer enabled. Change the delivery method to In-app before saving.'
-            : 'Email delivery requires the Email Add-on.';
+        _errorMessage = 'Email delivery requires the Email Add-on.';
       });
       return;
     }
-
-    final nextStatus = publishNow
-        ? usesEmail
-            ? 'queued'
-            : 'published'
-        : scheduledAt != null
-            ? 'scheduled'
-            : 'draft';
-    final emailStatus = usesEmail
-        ? publishNow
-            ? 'queued'
-            : 'not_applicable'
-        : 'not_applicable';
 
     setState(() {
       _isSaving = true;
       _errorMessage = null;
     });
 
-    final payload = <String, dynamic>{
-      'club_id': widget.clubId,
-      'subject': _subjectController.text.trim(),
-      'message': _messageController.text.trim(),
-      'recipient_group': _recipientGroup,
-      'channel': _channel,
-      'status': nextStatus,
-      'email_status': emailStatus,
-      'scheduled_at': scheduledAt?.toIso8601String(),
-      'published_at': publishNow ? DateTime.now().toIso8601String() : null,
-      'sent_at': null,
-    };
+    final now = DateTime.now();
+    final subjectTemplate = _subjectController.text.trim();
+    final bodyTemplate = _bodyController.text.trim();
+    final status = sendNow
+        ? usesEmail
+              ? 'queued'
+              : 'sent'
+        : 'draft';
 
     try {
-      final existing = widget.existing;
-      late final String communicationId;
+      final recipients = _messageKind == 'custom_individual'
+          ? [
+              _MemberRecipientOption(
+                id: _selectedRecipientMembershipId ?? 'custom',
+                userId: _selectedRecipientUserId,
+                fullName:
+                    _nullIfBlank(_recipientNameController.text) ?? 'Recipient',
+                email: _nullIfBlank(_recipientEmailController.text),
+                status: 'active',
+              ),
+            ]
+          : await _loadRecipientsForAudience(_audienceType);
 
-      if (existing == null) {
-        final inserted = await _supabase
-            .from('club_communications')
-            .insert(payload)
-            .select('id')
-            .single();
-
-        communicationId = inserted['id'].toString();
-      } else {
-        await _supabase
-            .from('club_communications')
-            .update(payload)
-            .eq('id', existing.id)
-            .eq('club_id', widget.clubId);
-
-        communicationId = existing.id;
-      }
-
-      if (publishNow && usesEmail) {
-        final deliveryError = await _sendQueuedEmailNow(communicationId);
-
+      if (recipients.isEmpty) {
         if (!mounted) return;
-
-        if (deliveryError != null) {
-          await _showDeliveryError(deliveryError);
-
-          if (!mounted) return;
-          Navigator.of(context).pop(true);
-          return;
-        }
+        setState(() {
+          _isSaving = false;
+          _errorMessage =
+              'No recipients were found for ${_audienceLabel(_audienceType)}.';
+        });
+        return;
       }
+
+      final batch = await _supabase
+          .from('club_communication_batches')
+          .insert({
+            'club_id': widget.clubId,
+            'message_kind': _messageKind,
+            'template_key': _templateKey,
+            'subject': subjectTemplate,
+            'body': bodyTemplate,
+            'audience_type': _messageKind == 'custom_individual'
+                ? 'individual'
+                : _audienceType,
+            'recipient_count': recipients.length,
+            'notification_count':
+                sendNow && (_channel == 'notification' || _channel == 'both')
+                ? recipients.length
+                : 0,
+            'email_count':
+                sendNow && (_channel == 'email' || _channel == 'both')
+                ? recipients
+                      .where((recipient) => recipient.email != null)
+                      .length
+                : 0,
+            'status': status,
+            'sent_at': sendNow ? now.toIso8601String() : null,
+          })
+          .select('id')
+          .single();
+
+      final communicationRows = recipients.map((recipient) {
+        final personalizedSubject = _renderForRecipient(
+          subjectTemplate,
+          recipient.fullName,
+        );
+        final personalizedBody = _renderForRecipient(
+          bodyTemplate,
+          recipient.fullName,
+        );
+        final isCustomRecipient = recipient.id == 'custom';
+
+        return {
+          'club_id': widget.clubId,
+          'batch_id': batch['id'],
+          'template_key': _templateKey,
+          'message_kind': _messageKind,
+          'related_type': isCustomRecipient ? null : recipient.relatedType,
+          'related_id': isCustomRecipient ? null : recipient.id,
+          'recipient_user_id': recipient.userId,
+          'recipient_name': recipient.fullName,
+          'recipient_email': recipient.email,
+          'channel': _channel,
+          'subject': personalizedSubject,
+          'body': personalizedBody,
+          'message': personalizedBody,
+          'status': sendNow
+              ? usesEmail
+                    ? 'queued'
+                    : 'notification_created'
+              : 'draft',
+          'sent_at': sendNow && !usesEmail ? now.toIso8601String() : null,
+        };
+      }).toList();
+
+      await _supabase.from('club_communications').insert(communicationRows);
 
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
-
       setState(() {
         _isSaving = false;
         _errorMessage = 'Unable to save communication: $error';
@@ -706,101 +1389,10 @@ class _CommunicationComposerDialogState
     }
   }
 
-  Future<String?> _sendQueuedEmailNow(String communicationId) async {
-    try {
-      final response = await _supabase.functions.invoke(
-        'send-club-communications',
-        body: {
-          'communication_id': communicationId,
-          'limit': 1,
-        },
-      );
-
-      final data = response.data;
-      if (data is Map) {
-        final topLevelError = data['error']?.toString().trim();
-        if (topLevelError != null && topLevelError.isNotEmpty) {
-          return topLevelError;
-        }
-
-        final results = data['results'];
-        if (results is List && results.isNotEmpty) {
-          final first = results.first;
-          if (first is Map) {
-            final status = first['status']?.toString();
-            final error = first['error']?.toString().trim();
-            final failedCount = int.tryParse(
-                  first['failed_count']?.toString() ?? '0',
-                ) ??
-                0;
-
-            if (status == 'failed' || failedCount > 0) {
-              if (error != null && error.isNotEmpty) return error;
-              return 'Email delivery failed for $failedCount recipient(s).';
-            }
-          }
-        }
-      }
-
-      return null;
-    } catch (error) {
-      return error.toString();
-    }
-  }
-
-  Future<void> _showDeliveryError(String error) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Email Delivery Failed'),
-        content: Text(error),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickScheduledDateTime() async {
-    final initial = _parseDateTime(_scheduledAtController.text) ??
-        DateTime.now().add(const Duration(hours: 1));
-
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime.now(),
-      lastDate: DateTime(2100),
-    );
-
-    if (date == null || !mounted) return;
-
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-
-    if (time == null) return;
-
-    final selected = DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
-
-    _scheduledAtController.text = _dateTimeText(selected);
-  }
-
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(
-        widget.existing == null ? 'New Communication' : 'Edit Communication',
-      ),
+      title: const Text('Compose Communication'),
       content: SizedBox(
         width: 760,
         child: Form(
@@ -811,56 +1403,84 @@ class _CommunicationComposerDialogState
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (_errorMessage != null) ...[
-                  Material(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(_errorMessage!),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                ],
-                if (_editingEmailCommunicationWithoutAddon) ...[
-                  Material(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                    child: const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Text(
-                        'This communication was created with email delivery, but the Email Add-on is no longer enabled. You can view it here, but you must change the delivery method to In-app before saving changes.',
-                      ),
-                    ),
-                  ),
+                  _InlineError(message: _errorMessage!),
                   const SizedBox(height: 14),
                 ],
                 DropdownButtonFormField<String>(
-                  initialValue: _templateId,
+                  initialValue: _messageKind,
                   decoration: const InputDecoration(
-                    labelText: 'Use a template',
+                    labelText: 'Message type',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'custom_individual',
+                      child: Text('Individual Message'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'custom_audience',
+                      child: Text('Group Message'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'newsletter',
+                      child: Text('Newsletter'),
+                    ),
+                  ],
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          setState(() => _messageKind = value);
+                          final template = widget.templates
+                              .where((item) => item.templateKey == _templateKey)
+                              .firstOrNull;
+                          if (template != null) {
+                            _subjectController.text = _renderComposerTemplate(
+                              template.subject,
+                            );
+                            _bodyController.text = _renderComposerTemplate(
+                              template.body,
+                            );
+                          }
+                        },
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _templateKey,
+                  decoration: const InputDecoration(
+                    labelText: 'Template',
                     border: OutlineInputBorder(),
                   ),
                   items: [
                     const DropdownMenuItem<String>(
                       value: null,
-                      child: Text('Start from scratch'),
+                      child: Text('No template'),
                     ),
-                    for (final template
-                        in widget.templates.where((item) => item.isActive))
+                    for (final template in widget.templates.where(
+                      (item) => item.isEnabled && item.isManualComposeTemplate,
+                    ))
                       DropdownMenuItem(
-                        value: template.id,
+                        value: template.templateKey,
                         child: Text(template.name),
                       ),
                   ],
-                  onChanged: _isSaving ? null : _applyTemplate,
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          final template = widget.templates
+                              .where((item) => item.templateKey == value)
+                              .firstOrNull;
+                          setState(() => _templateKey = value);
+                          _applyTemplate(template);
+                        },
                 ),
                 const SizedBox(height: 14),
-                _SectionTitle('Delivery Method'),
                 SegmentedButton<String>(
+                  selected: {_channel},
                   segments: const [
                     ButtonSegment(
-                      value: 'in_app',
-                      icon: Icon(Icons.campaign_outlined),
+                      value: 'notification',
+                      icon: Icon(Icons.notifications_outlined),
                       label: Text('In-app'),
                     ),
                     ButtonSegment(
@@ -874,78 +1494,204 @@ class _CommunicationComposerDialogState
                       label: Text('Both'),
                     ),
                   ],
-                  selected: {_channel},
                   onSelectionChanged: _isSaving
                       ? null
                       : (values) {
                           final selected = values.first;
-                          if (selected != 'in_app' &&
+                          if (selected != 'notification' &&
                               !widget.emailAddonEnabled) {
                             setState(() {
+                              _channel = 'notification';
                               _errorMessage =
                                   'Email delivery requires the Email Add-on.';
-                              _channel = 'in_app';
                             });
                             return;
                           }
                           setState(() {
-                            _errorMessage = null;
                             _channel = selected;
+                            _errorMessage = null;
                           });
                         },
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.emailAddonEnabled
-                      ? 'Email selections will be queued and sent through the email delivery function.'
-                      : 'In-app notices are included. Email delivery is available with the Email Add-on.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
                 const SizedBox(height: 14),
-                DropdownButtonFormField<String>(
-                  initialValue: _recipientGroup,
-                  decoration: const InputDecoration(
-                    labelText: 'Recipient group',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'all_members',
-                      child: Text('All Members'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'active_members',
-                      child: Text('Active Members'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'expired_members',
-                      child: Text('Expired Members'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'pending_applicants',
-                      child: Text('Pending Applicants'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'unpaid_members',
-                      child: Text('Members with Unpaid Dues'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'sanction_contacts',
-                      child: Text('Sanction Request Contacts'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'staff',
-                      child: Text('Club Staff'),
-                    ),
+                if (_messageKind == 'custom_individual') ...[
+                  if (_isLoadingRecipients) ...[
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 10),
+                  ] else if (_recipientLoadError != null) ...[
+                    _InlineError(message: _recipientLoadError!),
+                    const SizedBox(height: 10),
                   ],
-                  onChanged: _isSaving
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            setState(() => _recipientGroup = value);
+                  Autocomplete<_MemberRecipientOption>(
+                    displayStringForOption: (option) => option.displayLabel,
+                    optionsBuilder: (textEditingValue) {
+                      final query = textEditingValue.text.trim().toLowerCase();
+                      if (query.isEmpty) {
+                        return _recipientOptions.take(25);
+                      }
+
+                      return _recipientOptions
+                          .where((option) {
+                            return option.searchText.contains(query);
+                          })
+                          .take(25);
+                    },
+                    onSelected: _selectRecipient,
+                    fieldViewBuilder:
+                        (
+                          context,
+                          textEditingController,
+                          focusNode,
+                          onFieldSubmitted,
+                        ) {
+                          if (_recipientSearchController.text.isNotEmpty &&
+                              textEditingController.text.isEmpty) {
+                            textEditingController.text =
+                                _recipientSearchController.text;
                           }
+
+                          return TextFormField(
+                            controller: textEditingController,
+                            focusNode: focusNode,
+                            decoration: InputDecoration(
+                              labelText: 'Search active members',
+                              hintText: 'Start typing a member name or email',
+                              border: const OutlineInputBorder(),
+                              suffixIcon: textEditingController.text.isEmpty
+                                  ? const Icon(Icons.search)
+                                  : IconButton(
+                                      tooltip: 'Clear selected member',
+                                      onPressed: () {
+                                        textEditingController.clear();
+                                        _recipientSearchController.clear();
+                                        setState(() {
+                                          _selectedRecipientMembershipId = null;
+                                          _selectedRecipientUserId = null;
+                                        });
+                                      },
+                                      icon: const Icon(Icons.clear),
+                                    ),
+                            ),
+                            onChanged: (value) {
+                              _recipientSearchController.text = value;
+                              if (_selectedRecipientMembershipId != null) {
+                                setState(() {
+                                  _selectedRecipientMembershipId = null;
+                                  _selectedRecipientUserId = null;
+                                });
+                              }
+                            },
+                          );
                         },
-                ),
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4,
+                          borderRadius: BorderRadius.circular(12),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: 560,
+                              maxHeight: 280,
+                            ),
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  leading: const Icon(Icons.person_outline),
+                                  title: Text(option.fullName),
+                                  subtitle: Text(
+                                    option.email ?? 'No email on file',
+                                  ),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _recipientNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Recipient name',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) {
+                      final text = value?.trim() ?? '';
+                      if (text.isEmpty) return 'Recipient name is required.';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _recipientEmailController,
+                    decoration: const InputDecoration(
+                      labelText: 'Recipient email',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) {
+                      if (_channel == 'notification') return null;
+                      final text = value?.trim() ?? '';
+                      if (text.isEmpty) return 'Email is required.';
+                      if (!text.contains('@')) return 'Enter a valid email.';
+                      return null;
+                    },
+                  ),
+                ] else
+                  DropdownButtonFormField<String>(
+                    initialValue: _audienceType,
+                    decoration: const InputDecoration(
+                      labelText: 'Audience',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'active_members',
+                        child: Text('Active Members'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'expired_members',
+                        child: Text('Expired Membership'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'pending_applicants',
+                        child: Text('Pending Applicants'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'unpaid_members',
+                        child: Text('Members With Unpaid Dues'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'staff',
+                        child: Text('Club Board'),
+                      ),
+                    ],
+                    onChanged: _isSaving
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() => _audienceType = value);
+                              final template = widget.templates
+                                  .where(
+                                    (item) => item.templateKey == _templateKey,
+                                  )
+                                  .firstOrNull;
+                              if (template != null) {
+                                _subjectController.text =
+                                    _renderComposerTemplate(template.subject);
+                                _bodyController.text = _renderComposerTemplate(
+                                  template.body,
+                                );
+                              }
+                            }
+                          },
+                  ),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _subjectController,
@@ -953,60 +1699,21 @@ class _CommunicationComposerDialogState
                     labelText: 'Subject',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Subject is required.';
-                    }
-                    return null;
-                  },
+                  validator: _required,
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
-                  controller: _messageController,
-                  minLines: 8,
-                  maxLines: 16,
+                  controller: _bodyController,
+                  minLines: 10,
+                  maxLines: 18,
                   decoration: const InputDecoration(
                     labelText: 'Message',
+                    hintText:
+                        'Write the message exactly how you want it to appear.',
                     alignLabelWithHint: true,
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Message is required.';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  controller: _scheduledAtController,
-                  readOnly: true,
-                  decoration: InputDecoration(
-                    labelText: 'Schedule for later',
-                    hintText: 'Leave blank to save as a draft',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_scheduledAtController.text.isNotEmpty)
-                          IconButton(
-                            tooltip: 'Clear schedule',
-                            onPressed: _isSaving
-                                ? null
-                                : () {
-                                    setState(_scheduledAtController.clear);
-                                  },
-                            icon: const Icon(Icons.clear),
-                          ),
-                        IconButton(
-                          tooltip: 'Choose date and time',
-                          onPressed:
-                              _isSaving ? null : _pickScheduledDateTime,
-                          icon: const Icon(Icons.schedule_outlined),
-                        ),
-                      ],
-                    ),
-                  ),
+                  validator: _required,
                 ),
               ],
             ),
@@ -1019,165 +1726,20 @@ class _CommunicationComposerDialogState
           child: const Text('Cancel'),
         ),
         OutlinedButton.icon(
-          onPressed: _isSaving ? null : () => _save(publishNow: false),
+          onPressed: _isSaving ? null : () => _save(sendNow: false),
           icon: const Icon(Icons.save_outlined),
-          label: Text(
-            _scheduledAtController.text.isEmpty ? 'Save Draft' : 'Schedule',
-          ),
+          label: const Text('Save Draft'),
         ),
         FilledButton.icon(
-          onPressed: _isSaving ? null : () => _save(publishNow: true),
+          onPressed: _isSaving ? null : () => _save(sendNow: true),
           icon: _isSaving
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Icon(
-                  _channel == 'in_app'
-                      ? Icons.campaign_outlined
-                      : Icons.outbox_outlined,
-                ),
-          label: Text(
-            _isSaving
-                ? 'Saving...'
-                : _channel == 'in_app'
-                    ? 'Publish Notice'
-                    : 'Queue Email',
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-      ),
-    );
-  }
-}
-
-class _TemplateManagerDialog extends StatefulWidget {
-  const _TemplateManagerDialog({
-    required this.clubId,
-    required this.templates,
-  });
-
-  final String clubId;
-  final List<_CommunicationTemplate> templates;
-
-  @override
-  State<_TemplateManagerDialog> createState() =>
-      _TemplateManagerDialogState();
-}
-
-class _TemplateManagerDialogState extends State<_TemplateManagerDialog> {
-  final _supabase = Supabase.instance.client;
-  bool _changed = false;
-
-  Future<void> _editTemplate({_CommunicationTemplate? existing}) async {
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _TemplateEditorDialog(
-        clubId: widget.clubId,
-        existing: existing,
-      ),
-    );
-
-    if (result == true) {
-      _changed = true;
-      if (mounted) Navigator.of(context).pop(true);
-    }
-  }
-
-  Future<void> _toggleTemplate(_CommunicationTemplate template) async {
-    await _supabase
-        .from('club_communication_templates')
-        .update({'is_active': !template.isActive})
-        .eq('id', template.id)
-        .eq('club_id', widget.clubId);
-
-    _changed = true;
-    if (mounted) Navigator.of(context).pop(true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Communication Templates'),
-      content: SizedBox(
-        width: 680,
-        child: widget.templates.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No templates have been created yet.',
-                  textAlign: TextAlign.center,
-                ),
-              )
-            : ListView.separated(
-                shrinkWrap: true,
-                itemCount: widget.templates.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final template = widget.templates[index];
-                  return ListTile(
-                    leading: Icon(
-                      template.isActive
-                          ? Icons.description_outlined
-                          : Icons.block_outlined,
-                    ),
-                    title: Text(template.name),
-                    subtitle: Text(template.subject),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (value) {
-                        if (value == 'edit') {
-                          _editTemplate(existing: template);
-                        } else if (value == 'toggle') {
-                          _toggleTemplate(template);
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('Edit'),
-                        ),
-                        PopupMenuItem(
-                          value: 'toggle',
-                          child: Text(
-                            template.isActive ? 'Deactivate' : 'Activate',
-                          ),
-                        ),
-                      ],
-                    ),
-                    onTap: () => _editTemplate(existing: template),
-                  );
-                },
-              ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(_changed),
-          child: const Text('Close'),
-        ),
-        FilledButton.icon(
-          onPressed: () => _editTemplate(),
-          icon: const Icon(Icons.add),
-          label: const Text('New Template'),
+              : const Icon(Icons.send_outlined),
+          label: Text(_isSaving ? 'Saving...' : 'Send / Queue'),
         ),
       ],
     );
@@ -1185,17 +1747,13 @@ class _TemplateManagerDialogState extends State<_TemplateManagerDialog> {
 }
 
 class _TemplateEditorDialog extends StatefulWidget {
-  const _TemplateEditorDialog({
-    required this.clubId,
-    this.existing,
-  });
+  const _TemplateEditorDialog({required this.clubId, this.template});
 
   final String clubId;
-  final _CommunicationTemplate? existing;
+  final _CommunicationTemplate? template;
 
   @override
-  State<_TemplateEditorDialog> createState() =>
-      _TemplateEditorDialogState();
+  State<_TemplateEditorDialog> createState() => _TemplateEditorDialogState();
 }
 
 class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
@@ -1204,27 +1762,28 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
 
   late final TextEditingController _nameController;
   late final TextEditingController _subjectController;
-  late final TextEditingController _messageController;
-  bool _isActive = true;
+  late final TextEditingController _bodyController;
+  late String _channelDefault;
+  late bool _isEnabled;
   bool _isSaving = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.existing?.name ?? '');
-    _subjectController =
-        TextEditingController(text: widget.existing?.subject ?? '');
-    _messageController =
-        TextEditingController(text: widget.existing?.message ?? '');
-    _isActive = widget.existing?.isActive ?? true;
+    final template = widget.template;
+    _nameController = TextEditingController(text: template?.name ?? '');
+    _subjectController = TextEditingController(text: template?.subject ?? '');
+    _bodyController = TextEditingController(text: template?.body ?? '');
+    _channelDefault = template?.channelDefault ?? 'notification';
+    _isEnabled = template?.isEnabled ?? true;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _subjectController.dispose();
-    _messageController.dispose();
+    _bodyController.dispose();
     super.dispose();
   }
 
@@ -1237,24 +1796,32 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
       _errorMessage = null;
     });
 
-    final payload = <String, dynamic>{
+    final body = _bodyController.text.trim();
+    final template = widget.template;
+    final templateKey =
+        template?.templateKey ?? _slugFromName(_nameController.text.trim());
+    final payload = {
       'club_id': widget.clubId,
+      'template_key': templateKey,
       'name': _nameController.text.trim(),
       'subject': _subjectController.text.trim(),
-      'message': _messageController.text.trim(),
-      'is_active': _isActive,
+      'body': body,
+      'message': body,
+      'channel_default': _channelDefault,
+      'is_system_default': false,
+      'is_enabled': _isEnabled,
     };
 
     try {
-      final existing = widget.existing;
-
-      if (existing == null) {
-        await _supabase.from('club_communication_templates').insert(payload);
+      if (template == null || template.isSystemDefault) {
+        await _supabase
+            .from('club_communication_templates')
+            .upsert(payload, onConflict: 'club_id,template_key');
       } else {
         await _supabase
             .from('club_communication_templates')
             .update(payload)
-            .eq('id', existing.id)
+            .eq('id', template.id)
             .eq('club_id', widget.clubId);
       }
 
@@ -1271,23 +1838,38 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final template = widget.template;
+
     return AlertDialog(
-      title: Text(widget.existing == null ? 'New Template' : 'Edit Template'),
+      title: Text(
+        template == null
+            ? 'New Template'
+            : template.isSystemDefault
+            ? 'Customize Template'
+            : 'Edit Template',
+      ),
       content: SizedBox(
-        width: 640,
+        width: 700,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (_errorMessage != null) ...[
+                  _InlineError(message: _errorMessage!),
+                  const SizedBox(height: 14),
+                ],
+                if (template?.isSystemDefault == true) ...[
                   Material(
-                    color: Theme.of(context).colorScheme.errorContainer,
+                    color: Theme.of(context).colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(_errorMessage!),
+                    child: const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                        'You are editing a RingMaster default. Saving creates a club-specific override and leaves the default intact.',
+                      ),
                     ),
                   ),
                   const SizedBox(height: 14),
@@ -1310,12 +1892,38 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
                   validator: _required,
                 ),
                 const SizedBox(height: 14),
+                SegmentedButton<String>(
+                  selected: {_channelDefault},
+                  segments: const [
+                    ButtonSegment(
+                      value: 'notification',
+                      label: Text('In-app'),
+                      icon: Icon(Icons.notifications_outlined),
+                    ),
+                    ButtonSegment(
+                      value: 'email',
+                      label: Text('Email'),
+                      icon: Icon(Icons.email_outlined),
+                    ),
+                    ButtonSegment(
+                      value: 'both',
+                      label: Text('Both'),
+                      icon: Icon(Icons.all_inbox_outlined),
+                    ),
+                  ],
+                  onSelectionChanged: _isSaving
+                      ? null
+                      : (values) {
+                          setState(() => _channelDefault = values.first);
+                        },
+                ),
+                const SizedBox(height: 14),
                 TextFormField(
-                  controller: _messageController,
-                  minLines: 8,
-                  maxLines: 16,
+                  controller: _bodyController,
+                  minLines: 10,
+                  maxLines: 18,
                   decoration: const InputDecoration(
-                    labelText: 'Message',
+                    labelText: 'Message body',
                     alignLabelWithHint: true,
                     border: OutlineInputBorder(),
                   ),
@@ -1324,11 +1932,11 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
                 const SizedBox(height: 10),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Active template'),
-                  value: _isActive,
+                  title: const Text('Enabled'),
+                  value: _isEnabled,
                   onChanged: _isSaving
                       ? null
-                      : (value) => setState(() => _isActive = value),
+                      : (value) => setState(() => _isEnabled = value),
                 ),
               ],
             ),
@@ -1354,78 +1962,138 @@ class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
       ],
     );
   }
-
-  String? _required(String? value) {
-    return value == null || value.trim().isEmpty ? 'Required.' : null;
-  }
 }
 
-class _CommunicationRecord {
-  const _CommunicationRecord({
-    required this.id,
-    required this.subject,
-    required this.message,
-    required this.recipientGroup,
-    required this.channel,
-    required this.status,
-    required this.emailStatus,
-    required this.createdAt,
-    required this.failedCount,
-    this.lastError,
-    this.scheduledAt,
-    this.publishedAt,
-    this.sentAt,
-    this.recipientCount,
+class _CommunicationSettingsDialog extends StatefulWidget {
+  const _CommunicationSettingsDialog({
+    required this.clubId,
+    required this.emailAddonEnabled,
+    required this.senderName,
+    required this.replyToEmail,
   });
 
-  final String id;
-  final String subject;
-  final String message;
-  final String recipientGroup;
-  final String channel;
-  final String status;
-  final String emailStatus;
-  final DateTime? scheduledAt;
-  final DateTime? publishedAt;
-  final DateTime? sentAt;
-  final int? recipientCount;
-  final int failedCount;
-  final String? lastError;
-  final DateTime createdAt;
+  final String clubId;
+  final bool emailAddonEnabled;
+  final String? senderName;
+  final String? replyToEmail;
 
-  String get messagePreview => message.replaceAll(RegExp(r'\s+'), ' ').trim();
+  @override
+  State<_CommunicationSettingsDialog> createState() =>
+      _CommunicationSettingsDialogState();
+}
 
-  bool get usesEmail => channel == 'email' || channel == 'both';
+class _CommunicationSettingsDialogState
+    extends State<_CommunicationSettingsDialog> {
+  final _supabase = Supabase.instance.client;
+  late final TextEditingController _senderNameController;
+  late final TextEditingController _replyToEmailController;
+  bool _isSaving = false;
+  String? _errorMessage;
 
-  String get channelLabel {
-    switch (channel) {
-      case 'email':
-        return 'Email';
-      case 'both':
-        return 'In-app + Email';
-      case 'in_app':
-      default:
-        return 'In-app Notice';
+  @override
+  void initState() {
+    super.initState();
+    _senderNameController = TextEditingController(
+      text: widget.senderName ?? '',
+    );
+    _replyToEmailController = TextEditingController(
+      text: widget.replyToEmail ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _senderNameController.dispose();
+    _replyToEmailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_isSaving) return;
+
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _supabase
+          .from('clubs')
+          .update({
+            'communication_sender_name': _nullIfBlank(
+              _senderNameController.text,
+            ),
+            'communication_reply_to_email': _nullIfBlank(
+              _replyToEmailController.text,
+            ),
+          })
+          .eq('id', widget.clubId);
+
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _errorMessage = 'Unable to save communication settings: $error';
+      });
     }
   }
 
-  factory _CommunicationRecord.fromJson(Map<String, dynamic> json) {
-    return _CommunicationRecord(
-      id: json['id'].toString(),
-      subject: _nullableString(json['subject']) ?? 'Untitled Message',
-      message: _nullableString(json['message']) ?? '',
-      recipientGroup:
-          _nullableString(json['recipient_group']) ?? 'active_members',
-      channel: _nullableString(json['channel']) ?? 'in_app',
-      status: _nullableString(json['status']) ?? 'draft',
-      emailStatus: _nullableString(json['email_status']) ?? 'not_applicable',
-      scheduledAt: _nullableDate(json['scheduled_at']),
-      publishedAt: _nullableDate(json['published_at']),
-      sentAt: _nullableDate(json['sent_at']),
-      recipientCount: _nullableInt(json['recipient_count']),
-      failedCount: _nullableInt(json['failed_count']) ?? 0,
-      lastError: _nullableString(json['last_error']),
-      createdAt: _nullableDate(json['created_at']) ?? DateTime.now(),
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Communication Settings'),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_errorMessage != null) ...[
+              _InlineError(message: _errorMessage!),
+              const SizedBox(height: 14),
+            ],
+            _EmailAddonNotice(enabled: widget.emailAddonEnabled),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _senderNameController,
+              decoration: const InputDecoration(
+                labelText: 'Sender name',
+                hintText: 'Example: ISRBA Secretary',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _replyToEmailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Reply-to email',
+                hintText: 'secretary@example.com',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _isSaving ? null : _save,
+          icon: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save_outlined),
+          label: Text(_isSaving ? 'Saving...' : 'Save'),
+        ),
+      ],
     );
   }
 }
@@ -1435,63 +2103,185 @@ class _CommunicationTemplate {
     required this.id,
     required this.name,
     required this.subject,
-    required this.message,
-    required this.isActive,
+    required this.body,
+    required this.channelDefault,
+    required this.isSystemDefault,
+    required this.isEnabled,
+    this.clubId,
     this.templateKey,
+    this.description,
   });
 
   final String id;
-  final String name;
+  final String? clubId;
   final String? templateKey;
+  final String name;
+  final String? description;
   final String subject;
-  final String message;
-  final bool isActive;
+  final String body;
+  final String channelDefault;
+  final bool isSystemDefault;
+  final bool isEnabled;
+
+  String get bodyPreview => body.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  bool get isWorkflowEventTemplate {
+    final key = templateKey?.trim().toLowerCase();
+    if (key == null || key.isEmpty) return false;
+
+    return key.startsWith('membership_') ||
+        key.startsWith('sanction_') ||
+        key == 'payment_received' ||
+        key == 'pending_check_reminder';
+  }
+
+  bool get isManualComposeTemplate => !isWorkflowEventTemplate;
+
+  bool get canUseForManualCompose => isEnabled && isManualComposeTemplate;
 
   factory _CommunicationTemplate.fromJson(Map<String, dynamic> json) {
     return _CommunicationTemplate(
       id: json['id'].toString(),
-      name: _nullableString(json['name']) ?? 'Untitled Template',
+      clubId: _nullableString(json['club_id']),
       templateKey: _nullableString(json['template_key']),
+      name: _nullableString(json['name']) ?? 'Untitled Template',
+      description: _nullableString(json['description']),
       subject: _nullableString(json['subject']) ?? '',
-      message: _nullableString(json['message']) ?? '',
-      isActive: json['is_active'] == true,
+      body:
+          _nullableString(json['body']) ??
+          _nullableString(json['message']) ??
+          '',
+      channelDefault:
+          _nullableString(json['channel_default']) ?? 'notification',
+      isSystemDefault: json['is_system_default'] == true,
+      isEnabled: json['is_enabled'] != false,
     );
   }
 }
 
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({
-    required this.icon,
-    required this.label,
-    required this.value,
+class _CommunicationBatch {
+  const _CommunicationBatch({
+    required this.id,
+    required this.messageKind,
+    required this.subject,
+    required this.body,
+    required this.status,
+    required this.recipientCount,
+    required this.notificationCount,
+    required this.emailCount,
+    required this.createdAt,
+    this.templateKey,
+    this.audienceType,
+    this.sentAt,
   });
 
-  final IconData icon;
-  final String label;
-  final String value;
+  final String id;
+  final String messageKind;
+  final String? templateKey;
+  final String subject;
+  final String body;
+  final String? audienceType;
+  final int recipientCount;
+  final int notificationCount;
+  final int emailCount;
+  final String status;
+  final DateTime? sentAt;
+  final DateTime createdAt;
+
+  String get preview => body.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  factory _CommunicationBatch.fromJson(Map<String, dynamic> json) {
+    return _CommunicationBatch(
+      id: json['id'].toString(),
+      messageKind: _nullableString(json['message_kind']) ?? 'template',
+      templateKey: _nullableString(json['template_key']),
+      subject: _nullableString(json['subject']) ?? 'Untitled Message',
+      body: _nullableString(json['body']) ?? '',
+      audienceType: _nullableString(json['audience_type']),
+      recipientCount: _intValue(json['recipient_count']),
+      notificationCount: _intValue(json['notification_count']),
+      emailCount: _intValue(json['email_count']),
+      status: _nullableString(json['status']) ?? 'draft',
+      sentAt: _nullableDate(json['sent_at']),
+      createdAt: _nullableDate(json['created_at']) ?? DateTime.now(),
+    );
+  }
+}
+
+class _CommunicationRecord {
+  const _CommunicationRecord({
+    required this.id,
+    required this.subject,
+    required this.body,
+    required this.channel,
+    required this.status,
+    required this.createdAt,
+    this.recipientName,
+    this.recipientEmail,
+    this.sentAt,
+    this.errorMessage,
+  });
+
+  final String id;
+  final String subject;
+  final String body;
+  final String? recipientName;
+  final String? recipientEmail;
+  final String channel;
+  final String status;
+  final DateTime? sentAt;
+  final String? errorMessage;
+  final DateTime createdAt;
+
+  factory _CommunicationRecord.fromJson(Map<String, dynamic> json) {
+    return _CommunicationRecord(
+      id: json['id'].toString(),
+      subject: _nullableString(json['subject']) ?? 'Untitled Message',
+      body:
+          _nullableString(json['body']) ??
+          _nullableString(json['message']) ??
+          '',
+      recipientName: _nullableString(json['recipient_name']),
+      recipientEmail: _nullableString(json['recipient_email']),
+      channel: _nullableString(json['channel']) ?? 'notification',
+      status: _nullableString(json['status']) ?? 'queued',
+      sentAt: _nullableDate(json['sent_at']),
+      errorMessage: _nullableString(json['error_message']),
+      createdAt: _nullableDate(json['created_at']) ?? DateTime.now(),
+    );
+  }
+}
+
+class _EmailAddonNotice extends StatelessWidget {
+  const _EmailAddonNotice({required this.enabled});
+
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(child: Icon(icon)),
+            CircleAvatar(
+              backgroundColor: enabled
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHighest,
+              foregroundColor: enabled
+                  ? scheme.onPrimaryContainer
+                  : scheme.onSurfaceVariant,
+              child: Icon(enabled ? Icons.email_outlined : Icons.lock_outline),
+            ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label),
-                  const SizedBox(height: 2),
-                  Text(
-                    value,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                  ),
-                ],
+              child: Text(
+                enabled
+                    ? 'Email Add-on enabled. Messages can create notifications and queue email delivery.'
+                    : 'Base communications create in-app notifications and history records. Email delivery is available with the Email Add-on.',
               ),
             ),
           ],
@@ -1502,10 +2292,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.text,
-  });
+  const _DetailRow({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1515,6 +2302,7 @@ class _DetailRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 7),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18),
           const SizedBox(width: 8),
@@ -1555,8 +2343,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1598,9 +2386,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -1609,7 +2397,7 @@ class _InlineEmptyState extends StatelessWidget {
               const SizedBox(height: 18),
               FilledButton.icon(
                 onPressed: onAction,
-                icon: const Icon(Icons.edit_outlined),
+                icon: const Icon(Icons.add),
                 label: Text(actionLabel!),
               ),
             ],
@@ -1620,9 +2408,33 @@ class _InlineEmptyState extends StatelessWidget {
   }
 }
 
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.errorContainer,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(padding: const EdgeInsets.all(12), child: Text(message)),
+    );
+  }
+}
+
+String? _required(String? value) {
+  return value == null || value.trim().isEmpty ? 'Required.' : null;
+}
+
 String? _nullableString(dynamic value) {
   final text = value?.toString().trim();
   return text == null || text.isEmpty ? null : text;
+}
+
+String? _nullIfBlank(String value) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 DateTime? _nullableDate(dynamic value) {
@@ -1631,23 +2443,10 @@ DateTime? _nullableDate(dynamic value) {
   return DateTime.tryParse(text);
 }
 
-int? _nullableInt(dynamic value) {
+int _intValue(dynamic value) {
   if (value is int) return value;
-  return int.tryParse(value?.toString() ?? '');
-}
-
-DateTime? _parseDateTime(String value) {
-  final text = value.trim();
-  if (text.isEmpty) return null;
-  return DateTime.tryParse(text);
-}
-
-String _dateTimeText(DateTime value) {
-  final month = value.month.toString().padLeft(2, '0');
-  final day = value.day.toString().padLeft(2, '0');
-  final hour = value.hour.toString().padLeft(2, '0');
-  final minute = value.minute.toString().padLeft(2, '0');
-  return '${value.year}-$month-$day $hour:$minute';
+  if (value is num) return value.round();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 String _formatDateTime(DateTime value) {
@@ -1656,8 +2455,8 @@ String _formatDateTime(DateTime value) {
   final hour = value.hour == 0
       ? 12
       : value.hour > 12
-          ? value.hour - 12
-          : value.hour;
+      ? value.hour - 12
+      : value.hour;
   final minute = value.minute.toString().padLeft(2, '0');
   final meridiem = value.hour >= 12 ? 'PM' : 'AM';
   return '$month/$day/${value.year} $hour:$minute $meridiem';
@@ -1673,44 +2472,138 @@ String _titleCase(String value) {
       .join(' ');
 }
 
+String _renderPreviewText(String value, String clubName) {
+  return value
+      .replaceAll('{{club_name}}', clubName)
+      .replaceAll('{{recipient_name}}', 'Recipient')
+      .replaceAll('{{membership_type}}', 'Membership Type')
+      .replaceAll('{{amount_due}}', 'Amount Due')
+      .replaceAll('{{amount_paid}}', 'Amount Paid')
+      .replaceAll('{{payment_method}}', 'Payment Method')
+      .replaceAll('{{staff_message}}', 'Staff message')
+      .replaceAll('{{requesting_club_name}}', 'Requesting Club')
+      .replaceAll('{{show_date}}', 'Show Date')
+      .replaceAll('{{contact_name}}', 'Contact Name')
+      .replaceAll('{{request_scope}}', 'Request Scope')
+      .replaceAll('{{treasurer_mailing_address}}', 'Treasurer Mailing Address')
+      .replaceAll('{{message_body}}', 'Message preview');
+}
+
+String _slugFromName(String value) {
+  final slug = value
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_|_$'), '');
+
+  return slug.isEmpty
+      ? 'custom_template_${DateTime.now().millisecondsSinceEpoch}'
+      : slug;
+}
+
 extension _FirstOrNullExtension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-class _EmailAddonNotice extends StatelessWidget {
-  const _EmailAddonNotice({required this.enabled});
+class _MemberRecipientOption {
+  const _MemberRecipientOption({
+    required this.id,
+    required this.fullName,
+    required this.status,
+    this.relatedType = 'club_membership',
+    this.userId,
+    this.email,
+  });
 
-  final bool enabled;
+  final String id;
+  final String relatedType;
+  final String? userId;
+  final String fullName;
+  final String? email;
+  final String status;
 
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  bool get isActive {
+    final normalized = status.trim().toLowerCase();
+    return normalized.isEmpty ||
+        normalized == 'active' ||
+        normalized == 'current' ||
+        normalized == 'approved' ||
+        normalized == 'paid';
+  }
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: enabled
-                  ? scheme.primaryContainer
-                  : scheme.surfaceContainerHighest,
-              foregroundColor: enabled
-                  ? scheme.onPrimaryContainer
-                  : scheme.onSurfaceVariant,
-              child: Icon(enabled ? Icons.email_outlined : Icons.lock_outline),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                enabled
-                    ? 'Email Add-on enabled. Email messages can be queued and sent through the delivery function.'
-                    : 'Base communications create in-app notices and records. Email delivery is available as an add-on.',
-              ),
-            ),
-          ],
-        ),
-      ),
+  bool get isExpired {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'expired' ||
+        normalized == 'inactive' ||
+        normalized == 'lapsed';
+  }
+
+  bool get isUnpaid {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'unpaid' ||
+        normalized == 'payment_due' ||
+        normalized == 'pending_payment';
+  }
+
+  bool get isBoardOrStaff {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'board' ||
+        normalized == 'officer' ||
+        normalized == 'staff' ||
+        normalized == 'admin';
+  }
+
+  bool get isStaffActive => status.trim().toLowerCase() == 'active';
+
+  String get displayLabel {
+    final parts = [fullName, ?email];
+    return parts.join(' • ');
+  }
+
+  String get searchText => displayLabel.toLowerCase();
+
+  factory _MemberRecipientOption.fromJson(
+    Map<String, dynamic> json, {
+    String relatedType = 'club_membership',
+  }) {
+    final firstName = _nullableString(json['first_name']);
+    final lastName = _nullableString(json['last_name']);
+    final fullName = [firstName, lastName]
+        .whereType<String>()
+        .where((part) => part.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+
+    return _MemberRecipientOption(
+      id: json['id'].toString(),
+      relatedType: relatedType,
+      userId: _nullableString(json['user_id']),
+      fullName: fullName.isEmpty ? 'Unnamed Member' : fullName,
+      email: _nullableString(json['email']),
+      status:
+          _nullableString(json['payment_status']) ??
+          _nullableString(json['status']) ??
+          '',
+    );
+  }
+
+  factory _MemberRecipientOption.fromStaffJson(Map<String, dynamic> json) {
+    return _MemberRecipientOption(
+      id:
+          json['id']?.toString() ??
+          json['assignment_id']?.toString() ??
+          json['user_id']?.toString() ??
+          'staff',
+      relatedType: 'club_staff',
+      userId: _nullableString(json['user_id']),
+      fullName:
+          _nullableString(json['display_name']) ??
+          _nullableString(json['name']) ??
+          _nullableString(json['email']) ??
+          'Club Staff',
+      email: _nullableString(json['email']),
+      status: _nullableString(json['status']) ?? '',
     );
   }
 }

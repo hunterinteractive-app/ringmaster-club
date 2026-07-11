@@ -4,13 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../services/clubs/club_communications_service.dart';
 import '../../../services/clubs/club_service.dart';
 
 class ClubSanctionRequestApplyScreen extends StatefulWidget {
-  const ClubSanctionRequestApplyScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubSanctionRequestApplyScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -24,6 +22,7 @@ class _ClubSanctionRequestApplyScreenState
   final _formKey = GlobalKey<FormState>();
   final _supabase = Supabase.instance.client;
   final _clubService = ClubService();
+  final _communicationsService = ClubCommunicationsService();
 
   final _requestingClubController = TextEditingController();
   final _secretaryFirstNameController = TextEditingController();
@@ -154,9 +153,8 @@ class _ClubSanctionRequestApplyScreenState
       final types = (rows as List)
           .whereType<Map>()
           .map(
-            (row) => _SanctionTypeOption.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) =>
+                _SanctionTypeOption.fromJson(Map<String, dynamic>.from(row)),
           )
           .toList();
 
@@ -168,16 +166,26 @@ class _ClubSanctionRequestApplyScreenState
         _paymentMethod = acceptsOnlinePayments
             ? 'online'
             : allowCheckPayments
-                ? 'check'
-                : 'offline';
-        _treasurerName = _emptyToNull(clubRow['treasurer_name']?.toString() ?? '');
-        _treasurerAddressLine1 =
-            _emptyToNull(clubRow['treasurer_address_line1']?.toString() ?? '');
-        _treasurerAddressLine2 =
-            _emptyToNull(clubRow['treasurer_address_line2']?.toString() ?? '');
-        _treasurerCity = _emptyToNull(clubRow['treasurer_city']?.toString() ?? '');
-        _treasurerState = _emptyToNull(clubRow['treasurer_state']?.toString() ?? '');
-        _treasurerZip = _emptyToNull(clubRow['treasurer_zip']?.toString() ?? '');
+            ? 'check'
+            : 'offline';
+        _treasurerName = _emptyToNull(
+          clubRow['treasurer_name']?.toString() ?? '',
+        );
+        _treasurerAddressLine1 = _emptyToNull(
+          clubRow['treasurer_address_line1']?.toString() ?? '',
+        );
+        _treasurerAddressLine2 = _emptyToNull(
+          clubRow['treasurer_address_line2']?.toString() ?? '',
+        );
+        _treasurerCity = _emptyToNull(
+          clubRow['treasurer_city']?.toString() ?? '',
+        );
+        _treasurerState = _emptyToNull(
+          clubRow['treasurer_state']?.toString() ?? '',
+        );
+        _treasurerZip = _emptyToNull(
+          clubRow['treasurer_zip']?.toString() ?? '',
+        );
         _sanctionTypes = types;
         _selectedSanctionType = types.isEmpty ? null : types.first;
         _isLoading = false;
@@ -217,7 +225,6 @@ class _ClubSanctionRequestApplyScreenState
   }
 
   double get _checkoutAmount => _checkoutAmountCents / 100;
-
 
   bool get _isCheckPaymentSelected {
     return _checkoutAmountCents > 0 && _paymentMethod == 'check';
@@ -303,6 +310,7 @@ class _ClubSanctionRequestApplyScreenState
     });
 
     try {
+      final user = _supabase.auth.currentUser;
       final inserted = await _supabase
           .from('club_sanction_requests')
           .insert({
@@ -337,6 +345,12 @@ class _ClubSanctionRequestApplyScreenState
         throw Exception('Sanction request was created without an ID.');
       }
 
+      await _createSubmittedCommunications(
+        requestId: requestId,
+        selectedType: selectedType,
+        userId: user?.id,
+      );
+
       if (_isOnlinePaymentSelected) {
         await _clubService.startMemberCheckout(
           clubId: widget.club.clubId,
@@ -353,23 +367,21 @@ class _ClubSanctionRequestApplyScreenState
         });
       } else if (_isCheckPaymentSelected) {
         if (!mounted) return;
-        setState(() {
-          _successMessage =
-              'Your sanction request was submitted. Mail your check to the club treasurer.';
-        });
         await _showCheckPaymentDialog();
+        if (!mounted) return;
+        Navigator.of(context).pop(
+          'Your sanction request was submitted. Mail your check to the club treasurer.',
+        );
       } else if (_checkoutAmountCents > 0) {
         if (!mounted) return;
-        setState(() {
-          _successMessage =
-              'Your sanction request was submitted. Payment will be handled by the club.';
-        });
+        Navigator.of(context).pop(
+          'Your sanction request was submitted. Payment will be handled by the club.',
+        );
       } else {
         if (!mounted) return;
-        setState(() {
-          _successMessage =
-              'Your sanction request was submitted to ${widget.club.clubName} for review.';
-        });
+        Navigator.of(context).pop(
+          'Your sanction request was submitted to ${widget.club.clubName} for review.',
+        );
       }
     } catch (error) {
       if (!mounted) return;
@@ -382,6 +394,122 @@ class _ClubSanctionRequestApplyScreenState
           _isSubmitting = false;
         });
       }
+    }
+  }
+
+  Future<void> _createSubmittedCommunications({
+    required String requestId,
+    required _SanctionTypeOption selectedType,
+    required String? userId,
+  }) async {
+    final variables = {
+      'requesting_club_name': _requestingClubController.text.trim(),
+      'show_date': _showDateController.text.trim(),
+      'contact_name': _openSecretaryName,
+      'request_scope': _requestScopeLabel,
+      'amount_due': _moneyLabel(_checkoutAmountCents, selectedType.currency),
+      'amount_paid': _checkoutAmountCents <= 0
+          ? _moneyLabel(0, selectedType.currency)
+          : '',
+      'payment_method': _titleCase(
+        _checkoutAmountCents <= 0 ? 'waived' : _paymentMethod,
+      ),
+      'staff_message': '',
+    };
+
+    await _communicationsService.createWorkflowCommunication(
+      clubId: widget.club.clubId,
+      clubName: widget.club.clubName,
+      templateKey: 'sanction_request_submitted_requestor',
+      relatedType: 'sanction_request',
+      relatedId: requestId,
+      recipientUserId: userId,
+      recipientEmail: _emptyToNull(_contactEmailController.text),
+      recipientName: _openSecretaryName.isEmpty
+          ? _requestingClubController.text.trim()
+          : _openSecretaryName,
+      audienceType: 'sanction_request',
+      variables: variables,
+      preferEmailWhenAvailable: true,
+      createdBy: userId,
+    );
+
+    final staffRecipients = await _loadActiveStaffRecipients();
+    if (staffRecipients.isEmpty) {
+      final secretaryEmail = await _loadClubSecretaryEmailFallback();
+      if (secretaryEmail == null) return;
+
+      await _communicationsService.createWorkflowCommunication(
+        clubId: widget.club.clubId,
+        clubName: widget.club.clubName,
+        templateKey: 'sanction_request_submitted_club',
+        relatedType: 'sanction_request',
+        relatedId: requestId,
+        recipientEmail: secretaryEmail,
+        recipientName: '${widget.club.clubName} Secretary',
+        audienceType: 'club_staff',
+        variables: variables,
+        preferEmailWhenAvailable: true,
+        allowEmailWithoutAddon: true,
+        createdBy: userId,
+      );
+      return;
+    }
+
+    for (final recipient in staffRecipients) {
+      await _communicationsService.createWorkflowCommunication(
+        clubId: widget.club.clubId,
+        clubName: widget.club.clubName,
+        templateKey: 'sanction_request_submitted_club',
+        relatedType: 'sanction_request',
+        relatedId: requestId,
+        recipientUserId: recipient.userId,
+        recipientEmail: recipient.email,
+        recipientName: recipient.name,
+        audienceType: 'club_staff',
+        variables: variables,
+        preferEmailWhenAvailable: true,
+        allowEmailWithoutAddon: true,
+        createdBy: userId,
+      );
+    }
+  }
+
+  Future<String?> _loadClubSecretaryEmailFallback() async {
+    try {
+      final row = await _supabase
+          .from('clubs')
+          .select('communication_reply_to_email')
+          .eq('id', widget.club.clubId)
+          .maybeSingle();
+
+      if (row == null) return null;
+
+      return _nullableString(row['communication_reply_to_email']);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<_StaffRecipient>> _loadActiveStaffRecipients() async {
+    try {
+      final response = await _supabase.rpc(
+        'get_club_staff_permissions_dashboard',
+        params: {'p_club_id': widget.club.clubId},
+      );
+      if (response is! Map) return const [];
+      final staffRows = response['staff'];
+      if (staffRows is! List) return const [];
+
+      return staffRows
+          .whereType<Map>()
+          .map(
+            (row) => _StaffRecipient.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .where((recipient) => recipient.isActive)
+          .toList();
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -413,9 +541,10 @@ class _ClubSanctionRequestApplyScreenState
       _showZipController.text.trim(),
     ].where((part) => part.isNotEmpty).join(', ');
 
-    return [addressLines, cityStateZip]
-        .where((part) => part.trim().isNotEmpty)
-        .join('\n');
+    return [
+      addressLines,
+      cityStateZip,
+    ].where((part) => part.trim().isNotEmpty).join('\n');
   }
 
   String get _derivedShowType {
@@ -441,9 +570,15 @@ class _ClubSanctionRequestApplyScreenState
     final buffer = StringBuffer();
     final notes = _applicantNotesController.text.trim();
 
-    buffer.writeln('Show counts derived from selected sanction type and quantity:');
-    buffer.writeln('Youth: ${_showYouthSanctionNumbers ? _visibleSanctionBoxCount : 0}');
-    buffer.writeln('Open: ${_showOpenSanctionNumbers ? _visibleSanctionBoxCount : 0}');
+    buffer.writeln(
+      'Show counts derived from selected sanction type and quantity:',
+    );
+    buffer.writeln(
+      'Youth: ${_showYouthSanctionNumbers ? _visibleSanctionBoxCount : 0}',
+    );
+    buffer.writeln(
+      'Open: ${_showOpenSanctionNumbers ? _visibleSanctionBoxCount : 0}',
+    );
     buffer.writeln();
     buffer.writeln('ARBA sanction numbers:');
     if (_showYouthSanctionNumbers) {
@@ -617,9 +752,9 @@ class _ClubSanctionRequestApplyScreenState
           children: [
             Text(
               widget.club.clubName,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
@@ -964,8 +1099,8 @@ class _ClubSanctionRequestApplyScreenState
                     Text(
                       type.name,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     if (type.description.trim().isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -1022,9 +1157,9 @@ class _ClubSanctionRequestApplyScreenState
               if (mailingLabel.isNotEmpty)
                 SelectableText(
                   mailingLabel,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
                 )
               else
                 const Text(
@@ -1048,7 +1183,8 @@ class _ClubSanctionRequestApplyScreenState
 
     final amount = cents / 100;
     final symbol = currency.toUpperCase() == 'USD' ? r'$' : '';
-    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'.trim();
+    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'
+        .trim();
   }
 
   String? _required(String? value, String label) {
@@ -1164,7 +1300,8 @@ class _SanctionTypeOption {
 
     final amount = amountCents / 100;
     final symbol = currency.toUpperCase() == 'USD' ? r'$' : '';
-    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'.trim();
+    return '$symbol${amount.toStringAsFixed(2)} ${currency.toUpperCase()}'
+        .trim();
   }
 
   static int _intValue(dynamic value) {
@@ -1184,6 +1321,35 @@ class _SanctionTypeOption {
   }
 }
 
+class _StaffRecipient {
+  const _StaffRecipient({
+    required this.name,
+    required this.status,
+    this.userId,
+    this.email,
+  });
+
+  final String name;
+  final String status;
+  final String? userId;
+  final String? email;
+
+  bool get isActive => status.trim().toLowerCase() == 'active';
+
+  factory _StaffRecipient.fromJson(Map<String, dynamic> json) {
+    return _StaffRecipient(
+      name:
+          _nullableString(json['display_name']) ??
+          _nullableString(json['name']) ??
+          _nullableString(json['email']) ??
+          'Club Staff',
+      status: _nullableString(json['status']) ?? '',
+      userId: _nullableString(json['user_id']),
+      email: _nullableString(json['email']),
+    );
+  }
+}
+
 class _ResponsiveFields extends StatelessWidget {
   const _ResponsiveFields({required this.children});
 
@@ -1194,18 +1360,15 @@ class _ResponsiveFields extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 720;
-        final width = wide ? (constraints.maxWidth - 12) / 2 : constraints.maxWidth;
+        final width = wide
+            ? (constraints.maxWidth - 12) / 2
+            : constraints.maxWidth;
 
         return Wrap(
           spacing: 12,
           runSpacing: 12,
           children: children
-              .map(
-                (child) => SizedBox(
-                  width: width,
-                  child: child,
-                ),
-              )
+              .map((child) => SizedBox(width: width, child: child))
               .toList(),
         );
       },
@@ -1255,9 +1418,9 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
     );
   }
 }
@@ -1326,8 +1489,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1340,8 +1503,6 @@ class _MessageState extends StatelessWidget {
     );
   }
 }
-
-
 
 class _SanctionNumbersTable extends StatelessWidget {
   const _SanctionNumbersTable({
@@ -1398,18 +1559,20 @@ class _SanctionNumbersTable extends StatelessWidget {
     return TableRow(
       children: [
         _TableHeader(label),
-        ...controllers.take(visibleCount).map(
-          (controller) => Padding(
-            padding: const EdgeInsets.all(6),
-            child: TextFormField(
-              controller: controller,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
+        ...controllers
+            .take(visibleCount)
+            .map(
+              (controller) => Padding(
+                padding: const EdgeInsets.all(6),
+                child: TextFormField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
       ],
     );
   }
@@ -1427,14 +1590,13 @@ class _TableHeader extends StatelessWidget {
       child: Text(
         text,
         textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
 }
-
 
 class _PaymentMethodCard extends StatelessWidget {
   const _PaymentMethodCard({
@@ -1514,7 +1676,9 @@ class _PaymentMethodOption extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
               color: selected ? scheme.primary : scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 12),
@@ -1525,8 +1689,8 @@ class _PaymentMethodOption extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(subtitle),
@@ -1538,4 +1702,9 @@ class _PaymentMethodOption extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _nullableString(dynamic value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
 }

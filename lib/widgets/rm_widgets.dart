@@ -7,10 +7,7 @@ class RMPagePadding extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-      return Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: child,
-      );
+    return Padding(padding: const EdgeInsets.all(AppSpacing.lg), child: child);
   }
 }
 
@@ -37,9 +34,9 @@ class RMSectionHeader extends StatelessWidget {
             children: [
               Text(title, style: Theme.of(context).textTheme.titleMedium),
               if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
-            ],
+                const SizedBox(height: AppSpacing.xs),
+                Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
+              ],
             ],
           ),
         ),
@@ -69,10 +66,13 @@ class RMCard extends StatelessWidget {
     final content = Padding(padding: padding, child: child);
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(AppRadius.md),
+      color: AppColors.surface,
       elevation: 1,
       shadowColor: Colors.black.withValues(alpha: .06),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        side: const BorderSide(color: AppColors.clubLight),
+      ),
       child: onTap == null
           ? content
           : InkWell(
@@ -103,20 +103,17 @@ class RMBadge extends StatelessWidget {
     final bg = danger
         ? AppColors.dangerBg
         : success
-            ? AppColors.successBg
-            : AppColors.bg;
+        ? AppColors.successBg
+        : AppColors.bg;
 
     final fg = danger
         ? AppColors.danger
         : success
-            ? AppColors.success
-            : AppColors.text;
+        ? AppColors.success
+        : AppColors.text;
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 7,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -166,9 +163,9 @@ class RMEmptyState extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              subtitle!,
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                subtitle!,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),

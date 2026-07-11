@@ -4,19 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../services/clubs/club_communications_service.dart';
 import 'sanction_types_screen.dart';
 
 class SanctionRequestsScreen extends StatefulWidget {
-  const SanctionRequestsScreen({
-    super.key,
-    required this.club,
-  });
+  const SanctionRequestsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
   @override
-  State<SanctionRequestsScreen> createState() =>
-      _SanctionRequestsScreenState();
+  State<SanctionRequestsScreen> createState() => _SanctionRequestsScreenState();
 }
 
 class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
@@ -59,7 +56,9 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
     try {
       final clubRow = await _supabase
           .from('clubs')
-          .select('sanction_requests_addon_enabled,allow_sanction_check_payments')
+          .select(
+            'sanction_requests_addon_enabled,allow_sanction_check_payments',
+          )
           .eq('id', widget.club.clubId)
           .single();
 
@@ -109,25 +108,18 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
           .whereType<Map>()
           .map((row) => _SanctionType.fromJson(Map<String, dynamic>.from(row)))
           .toList();
-      final sanctionTypeMap = {
-        for (final type in sanctionTypes) type.id: type,
-      };
+      final sanctionTypeMap = {for (final type in sanctionTypes) type.id: type};
 
-      final requests = (requestRows as List)
-          .whereType<Map>()
-          .map(
-            (row) {
-              final json = Map<String, dynamic>.from(row);
-              final sanctionTypeId = json['sanction_type_id']?.toString();
-              return _SanctionRequest.fromJson(
-                json,
-                sanctionType: sanctionTypeId == null
-                    ? null
-                    : sanctionTypeMap[sanctionTypeId],
-              );
-            },
-          )
-          .toList();
+      final requests = (requestRows as List).whereType<Map>().map((row) {
+        final json = Map<String, dynamic>.from(row);
+        final sanctionTypeId = json['sanction_type_id']?.toString();
+        return _SanctionRequest.fromJson(
+          json,
+          sanctionType: sanctionTypeId == null
+              ? null
+              : sanctionTypeMap[sanctionTypeId],
+        );
+      }).toList();
 
       if (!mounted) return;
 
@@ -205,7 +197,6 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
       ),
     );
   }
-
 
   List<_SanctionRequest> get _filteredRequests {
     final query = _searchController.text.trim().toLowerCase();
@@ -298,7 +289,10 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
     );
   }
 
-  Future<void> _openEditor({_SanctionRequest? existing}) async {
+  Future<void> _openEditor({
+    _SanctionRequest? existing,
+    String? initialStatus,
+  }) async {
     if (!_sanctionRequestsAddonEnabled) {
       _showLockedFeature();
       return;
@@ -308,61 +302,15 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
       barrierDismissible: false,
       builder: (_) => _SanctionRequestDialog(
         clubId: widget.club.clubId,
+        clubName: widget.club.clubName,
         sanctionTypes: _sanctionTypesForDialog(existing),
         existing: existing,
+        initialStatus: initialStatus,
       ),
     );
 
     if (changed == true) {
       await _loadRequests();
-    }
-  }
-
-  Future<void> _openQuickReview(
-    _SanctionRequest request,
-    String status,
-  ) async {
-    if (!_sanctionRequestsAddonEnabled) {
-      _showLockedFeature();
-      return;
-    }
-    final result = await showDialog<_QuickReviewResult>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _QuickReviewDialog(
-        request: request,
-        status: status,
-      ),
-    );
-
-    if (result == null) return;
-
-    try {
-      await _supabase
-          .from('club_sanction_requests')
-          .update({
-            'status': status,
-            'sanction_number': result.sanctionNumber,
-            'staff_notes': result.staffNotes,
-            'reviewed_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', request.id)
-          .eq('club_id', widget.club.clubId);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${request.showName} was ${_titleCase(status).toLowerCase()}.',
-          ),
-        ),
-      );
-      await _loadRequests();
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to update sanction request: $error')),
-      );
     }
   }
 
@@ -383,10 +331,10 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
         onPressed: _isLoading
             ? null
             : !_sanctionRequestsAddonEnabled
-                ? _showLockedFeature
-                : _activeSanctionTypes.isEmpty
-                    ? _showNoActiveSanctionTypesDialog
-                    : () => _openEditor(),
+            ? _showLockedFeature
+            : _activeSanctionTypes.isEmpty
+            ? _showNoActiveSanctionTypesDialog
+            : () => _openEditor(),
         icon: Icon(
           _sanctionRequestsAddonEnabled ? Icons.add : Icons.lock_outline,
         ),
@@ -430,9 +378,9 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -537,9 +485,9 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
           ],
           Text(
             '${filtered.length} ${filtered.length == 1 ? 'request' : 'requests'}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           if (_requests.isEmpty)
@@ -575,12 +523,18 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
                         child: _SanctionRequestCard(
                           request: request,
                           onEdit: () => _openEditor(existing: request),
-                          onApprove: () => _openQuickReview(
-                            request,
-                            'approved',
+                          onApprove: () => _openEditor(
+                            existing: request,
+                            initialStatus: 'approved',
                           ),
-                          onReturn: () => _openQuickReview(request, 'returned'),
-                          onDeny: () => _openQuickReview(request, 'denied'),
+                          onReturn: () => _openEditor(
+                            existing: request,
+                            initialStatus: 'returned',
+                          ),
+                          onDeny: () => _openEditor(
+                            existing: request,
+                            initialStatus: 'denied',
+                          ),
                         ),
                       ),
                   ],
@@ -626,9 +580,7 @@ class _SanctionRequestCard extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const CircleAvatar(
-                    child: Icon(Icons.verified_outlined),
-                  ),
+                  const CircleAvatar(child: Icon(Icons.verified_outlined)),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -636,10 +588,8 @@ class _SanctionRequestCard extends StatelessWidget {
                       children: [
                         Text(
                           request.showName,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
                         Text(request.requestingClubName),
                       ],
@@ -676,19 +626,13 @@ class _SanctionRequestCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              _DetailRow(
-                icon: Icons.event_outlined,
-                text: request.dateLabel,
-              ),
+              _DetailRow(icon: Icons.event_outlined, text: request.dateLabel),
               if (request.locationName != null)
                 _DetailRow(
                   icon: Icons.location_on_outlined,
                   text: request.locationName!,
                 ),
-              _DetailRow(
-                icon: Icons.person_outline,
-                text: request.contactName,
-              ),
+              _DetailRow(icon: Icons.person_outline, text: request.contactName),
               if (request.contactEmail != null)
                 _DetailRow(
                   icon: Icons.email_outlined,
@@ -766,155 +710,30 @@ class _SanctionRequestCard extends StatelessWidget {
   }
 }
 
-class _QuickReviewDialog extends StatefulWidget {
-  const _QuickReviewDialog({
-    required this.request,
-    required this.status,
-  });
-
-  final _SanctionRequest request;
-  final String status;
-
-  @override
-  State<_QuickReviewDialog> createState() => _QuickReviewDialogState();
-}
-
-class _QuickReviewDialogState extends State<_QuickReviewDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _sanctionNumberController;
-  late final TextEditingController _staffNotesController;
-
-  bool get _isApproval => widget.status == 'approved';
-
-  @override
-  void initState() {
-    super.initState();
-    _sanctionNumberController = TextEditingController(
-      text: widget.request.sanctionNumber ?? '',
-    );
-    _staffNotesController = TextEditingController(
-      text: widget.request.staffNotes ?? '',
-    );
-  }
-
-  @override
-  void dispose() {
-    _sanctionNumberController.dispose();
-    _staffNotesController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('${_titleCase(widget.status)} Sanction Request'),
-      content: SizedBox(
-        width: 520,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                widget.request.showName,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Text(widget.request.requestingClubName),
-              const SizedBox(height: 16),
-              if (_isApproval) ...[
-                TextFormField(
-                  controller: _sanctionNumberController,
-                  decoration: const InputDecoration(
-                    labelText: 'Sanction number',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Sanction number is required to approve.';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 14),
-              ],
-              TextFormField(
-                controller: _staffNotesController,
-                minLines: 3,
-                maxLines: 6,
-                decoration: InputDecoration(
-                  labelText:
-                      _isApproval ? 'Staff notes' : 'Staff notes / reason',
-                  hintText: _isApproval
-                      ? 'Optional internal notes about this approval.'
-                      : 'Explain what the requesting club needs to know.',
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: () {
-            if (!(_formKey.currentState?.validate() ?? false)) return;
-            Navigator.of(context).pop(
-              _QuickReviewResult(
-                sanctionNumber: _isApproval
-                    ? _nullIfBlankValue(_sanctionNumberController.text)
-                    : widget.request.sanctionNumber,
-                staffNotes: _nullIfBlankValue(_staffNotesController.text),
-              ),
-            );
-          },
-          icon: Icon(
-            _isApproval ? Icons.check_circle_outline : Icons.save_outlined,
-          ),
-          label: Text(_titleCase(widget.status)),
-        ),
-      ],
-    );
-  }
-}
-
-class _QuickReviewResult {
-  const _QuickReviewResult({
-    required this.sanctionNumber,
-    required this.staffNotes,
-  });
-
-  final String? sanctionNumber;
-  final String? staffNotes;
-}
-
 class _SanctionRequestDialog extends StatefulWidget {
   const _SanctionRequestDialog({
     required this.clubId,
+    required this.clubName,
     required this.sanctionTypes,
     this.existing,
+    this.initialStatus,
   });
 
   final String clubId;
+  final String clubName;
   final List<_SanctionType> sanctionTypes;
   final _SanctionRequest? existing;
+  final String? initialStatus;
 
   @override
-  State<_SanctionRequestDialog> createState() =>
-      _SanctionRequestDialogState();
+  State<_SanctionRequestDialog> createState() => _SanctionRequestDialogState();
 }
 
 class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
   final _formKey = GlobalKey<FormState>();
   final _supabase = Supabase.instance.client;
-
+  final _communicationsService = ClubCommunicationsService();
+  final Map<String, TextEditingController> _sanctionNumberControllers = {};
   late final TextEditingController _requestingClubController;
   late final TextEditingController _contactNameController;
   late final TextEditingController _contactEmailController;
@@ -945,43 +764,54 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     super.initState();
     final existing = widget.existing;
 
-    _requestingClubController =
-        TextEditingController(text: existing?.requestingClubName ?? '');
-    _contactNameController =
-        TextEditingController(text: existing?.contactName ?? '');
-    _contactEmailController =
-        TextEditingController(text: existing?.contactEmail ?? '');
-    _contactPhoneController =
-        TextEditingController(text: existing?.contactPhone ?? '');
-    _showNameController =
-        TextEditingController(text: existing?.showName ?? '');
-    _showDateController =
-        TextEditingController(text: _dateText(existing?.showDate));
-    _showEndDateController =
-        TextEditingController(text: _dateText(existing?.showEndDate));
-    _locationNameController =
-        TextEditingController(text: existing?.locationName ?? '');
-    _locationAddressController =
-        TextEditingController(text: existing?.locationAddress ?? '');
+    _requestingClubController = TextEditingController(
+      text: existing?.requestingClubName ?? '',
+    );
+    _contactNameController = TextEditingController(
+      text: existing?.contactName ?? '',
+    );
+    _contactEmailController = TextEditingController(
+      text: existing?.contactEmail ?? '',
+    );
+    _contactPhoneController = TextEditingController(
+      text: existing?.contactPhone ?? '',
+    );
+    _showNameController = TextEditingController(text: existing?.showName ?? '');
+    _showDateController = TextEditingController(
+      text: _dateText(existing?.showDate),
+    );
+    _showEndDateController = TextEditingController(
+      text: _dateText(existing?.showEndDate),
+    );
+    _locationNameController = TextEditingController(
+      text: existing?.locationName ?? '',
+    );
+    _locationAddressController = TextEditingController(
+      text: existing?.locationAddress ?? '',
+    );
     _feeDueController = TextEditingController(
       text: existing?.feeDue.toStringAsFixed(2) ?? '0.00',
     );
     _amountPaidController = TextEditingController(
       text: existing?.amountPaid.toStringAsFixed(2) ?? '0.00',
     );
-    _currencyController =
-        TextEditingController(text: existing?.currency.toUpperCase() ?? 'USD');
-    _sanctionNumberController =
-        TextEditingController(text: existing?.sanctionNumber ?? '');
-    _applicantNotesController =
-        TextEditingController(text: existing?.applicantNotes ?? '');
-    _staffNotesController =
-        TextEditingController(text: existing?.staffNotes ?? '');
+    _currencyController = TextEditingController(
+      text: existing?.currency.toUpperCase() ?? 'USD',
+    );
+    _sanctionNumberController = TextEditingController(
+      text: existing?.sanctionNumber ?? '',
+    );
+    _applicantNotesController = TextEditingController(
+      text: existing?.applicantNotes ?? '',
+    );
+    _staffNotesController = TextEditingController(
+      text: existing?.staffNotes ?? '',
+    );
 
     _sanctionTypeId = existing?.sanctionTypeId;
     _showType = existing?.showType ?? 'all_breed';
     _sanctionCategory = existing?.sanctionCategory ?? 'rabbit';
-    _status = existing?.status ?? 'pending';
+    _status = widget.initialStatus ?? existing?.status ?? 'pending';
     _paymentStatus = existing?.paymentStatus ?? 'unpaid';
 
     if (_sanctionTypeId == null && widget.sanctionTypes.isNotEmpty) {
@@ -1007,17 +837,22 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     _sanctionNumberController.dispose();
     _applicantNotesController.dispose();
     _staffNotesController.dispose();
+    for (final controller in _sanctionNumberControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  void _applySanctionType(
-    _SanctionType type, {
-    bool updateState = true,
-  }) {
+  void _applySanctionType(_SanctionType type, {bool updateState = true}) {
     void apply() {
       _sanctionTypeId = type.id;
       _feeDueController.text = type.basePrice.toStringAsFixed(2);
       _currencyController.text = type.currency.toUpperCase();
+
+      for (final controller in _sanctionNumberControllers.values) {
+        controller.dispose();
+      }
+      _sanctionNumberControllers.clear();
     }
 
     if (updateState) {
@@ -1043,10 +878,11 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       return;
     }
 
-    if (_status == 'approved' &&
-        _sanctionNumberController.text.trim().isEmpty) {
+    final missingSanctionNumbers = _missingSanctionNumberLabels();
+    if (_status == 'approved' && missingSanctionNumbers.isNotEmpty) {
       setState(() {
-        _errorMessage = 'Enter a sanction number before approving.';
+        _errorMessage =
+            'Enter sanction number(s) for ${missingSanctionNumbers.join(', ')} before approving.';
       });
       return;
     }
@@ -1086,7 +922,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
           ? 'usd'
           : _currencyController.text.trim().toLowerCase(),
       'payment_status': _paymentStatus,
-      'sanction_number': _nullIfBlank(_sanctionNumberController.text),
+      'sanction_number': _sanctionNumberValue(),
       'applicant_notes': _nullIfBlank(_applicantNotesController.text),
       'staff_notes': _nullIfBlank(_staffNotesController.text),
       'reviewed_at': reviewedAt,
@@ -1094,13 +930,30 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
 
     try {
       if (existing == null) {
-        await _supabase.from('club_sanction_requests').insert(payload);
+        final inserted = await _supabase
+            .from('club_sanction_requests')
+            .insert(payload)
+            .select('id')
+            .single();
+        await _createSubmittedRequestCommunication(
+          requestId: inserted['id'].toString(),
+        );
       } else {
         await _supabase
             .from('club_sanction_requests')
             .update(payload)
             .eq('id', existing.id)
             .eq('club_id', widget.clubId);
+
+        final statusChanged = existing.status != _status;
+        final shouldCreateReviewCommunication =
+            statusChanged && (_status == 'approved' || _status == 'returned');
+
+        if (shouldCreateReviewCommunication) {
+          await _createReviewCommunicationForCurrentStatus(
+            requestId: existing.id,
+          );
+        }
       }
 
       if (!mounted) return;
@@ -1115,6 +968,44 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     }
   }
 
+  Future<void> _createSubmittedRequestCommunication({
+    required String requestId,
+  }) async {
+    await _communicationsService.createWorkflowCommunication(
+      clubId: widget.clubId,
+      clubName: widget.clubName,
+      templateKey: 'sanction_request_submitted_requestor',
+      relatedType: 'sanction_request',
+      relatedId: requestId,
+      recipientEmail: _nullIfBlank(_contactEmailController.text),
+      recipientName: _contactNameController.text.trim(),
+      audienceType: 'sanction_request',
+      variables: {
+        'requesting_club_name': _requestingClubController.text.trim(),
+        'show_date': _dateValue(_showDateController.text) ?? '',
+        'contact_name': _contactNameController.text.trim(),
+        'request_scope': _selectedSanctionScopeLabel(),
+        'amount_due': _money(
+          double.tryParse(_feeDueController.text.trim()) ?? 0,
+        ),
+        'amount_paid': _money(
+          double.tryParse(_amountPaidController.text.trim()) ?? 0,
+        ),
+        'payment_method': _titleCase(_paymentStatus),
+        'staff_message': '',
+      },
+      preferEmailWhenAvailable: true,
+      createdBy: _supabase.auth.currentUser?.id,
+    );
+  }
+
+  String _selectedSanctionScopeLabel() {
+    final selectedType = widget.sanctionTypes
+        .where((type) => type.id == _sanctionTypeId)
+        .firstOrNull;
+    return selectedType?.sanctionScope ?? _titleCase(_showType);
+  }
+
   String? _reviewedAtPayload(_SanctionRequest? existing) {
     if (_status == 'pending') return null;
 
@@ -1126,6 +1017,182 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     }
 
     return DateTime.now().toIso8601String();
+  }
+
+  Future<void> _createReviewCommunicationForCurrentStatus({
+    required String requestId,
+  }) async {
+      final templateKey = switch (_status) {
+        'approved' => 'sanction_approved',
+        'returned' => 'sanction_needs_info',
+        _ => null,
+      };
+
+      if (templateKey == null) return;
+
+      final recipientName = _contactNameController.text.trim().isEmpty
+          ? _requestingClubController.text.trim()
+          : _contactNameController.text.trim();
+
+      debugPrint(
+        'Creating sanction dialog review communication: '
+        'template=$templateKey request=$requestId '
+        'recipient=${_contactEmailController.text.trim()} status=$_status',
+      );
+
+      final communicationId =
+          await _communicationsService.createWorkflowCommunication(
+        clubId: widget.clubId,
+        clubName: widget.clubName,
+        templateKey: templateKey,
+        relatedType: 'sanction_request',
+        relatedId: requestId,
+        recipientEmail: _nullIfBlank(_contactEmailController.text),
+        recipientName: recipientName,
+        audienceType: 'sanction_request',
+        variables: {
+          'requesting_club_name': _requestingClubController.text.trim(),
+          'show_date': _dateValue(_showDateController.text) ?? '',
+          'contact_name': _contactNameController.text.trim(),
+          'request_scope': _selectedSanctionScopeLabel(),
+          'amount_due': _money(
+            double.tryParse(_feeDueController.text.trim()) ?? 0,
+          ),
+          'amount_paid': _money(
+            double.tryParse(_amountPaidController.text.trim()) ?? 0,
+          ),
+          'payment_method': _titleCase(_paymentStatus),
+          'sanction_number': _sanctionNumberValue() ?? '',
+          'sanction_numbers': _sanctionNumberValue() ?? '',
+          'staff_message': _staffNotesController.text.trim(),
+        },
+        preferEmailWhenAvailable: true,
+        createdBy: _supabase.auth.currentUser?.id,
+      );
+
+      debugPrint(
+        'Sanction dialog review communication created: '
+        'template=$templateKey id=$communicationId',
+      );
+    }
+
+  List<Widget> _buildSanctionNumberFields() {
+    return [
+      for (final slot in _sanctionNumberSlots())
+        TextFormField(
+          controller: _sanctionNumberControllerFor(slot),
+          decoration: InputDecoration(
+            labelText: '${slot.label} sanction number',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+    ];
+  }
+
+  TextEditingController _sanctionNumberControllerFor(
+    _SanctionNumberSlot slot,
+  ) {
+    return _sanctionNumberControllers.putIfAbsent(
+      slot.key,
+      () => TextEditingController(text: _existingSanctionNumberForSlot(slot)),
+    );
+  }
+
+  String _existingSanctionNumberForSlot(_SanctionNumberSlot slot) {
+    final existing = _sanctionNumberController.text.trim();
+    if (existing.isEmpty) return '';
+
+    final lines = existing
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+
+    for (final line in lines) {
+      final parts = line.split(':');
+      if (parts.length < 2) continue;
+
+      final label = parts.first.trim().toLowerCase();
+      final value = parts.sublist(1).join(':').trim();
+
+      if (label == slot.label.toLowerCase()) {
+        return value;
+      }
+    }
+
+    if (lines.length == 1 && _sanctionNumberSlots().length == 1) {
+      return lines.first;
+    }
+
+    return '';
+  }
+
+  List<_SanctionNumberSlot> _sanctionNumberSlots() {
+    final selectedType = widget.sanctionTypes
+        .where((type) => type.id == _sanctionTypeId)
+        .firstOrNull;
+
+    var openCount = selectedType?.includedOpenCount ?? 0;
+    var youthCount = selectedType?.includedYouthCount ?? 0;
+    final scope = selectedType?.sanctionScope.toLowerCase() ?? '';
+
+    if (openCount == 0 && youthCount == 0) {
+      if (scope.contains('open') && scope.contains('youth')) {
+        openCount = 1;
+        youthCount = 1;
+      } else if (scope.contains('youth')) {
+        youthCount = 1;
+      } else {
+        openCount = 1;
+      }
+    }
+
+    final slots = <_SanctionNumberSlot>[];
+
+    for (var index = 1; index <= youthCount; index++) {
+      slots.add(
+        _SanctionNumberSlot(
+          key: 'youth_$index',
+          label: youthCount == 1 ? 'Youth' : 'Youth $index',
+        ),
+      );
+    }
+
+    for (var index = 1; index <= openCount; index++) {
+      slots.add(
+        _SanctionNumberSlot(
+          key: 'open_$index',
+          label: openCount == 1 ? 'Open' : 'Open $index',
+        ),
+      );
+    }
+
+    if (slots.isEmpty) {
+      slots.add(const _SanctionNumberSlot(key: 'sanction_1', label: 'Show 1'));
+    }
+
+    return slots;
+  }
+
+  List<String> _missingSanctionNumberLabels() {
+    return [
+      for (final slot in _sanctionNumberSlots())
+        if ((_sanctionNumberControllers[slot.key]?.text.trim() ?? '').isEmpty)
+          slot.label,
+    ];
+  }
+
+  String? _sanctionNumberValue() {
+    final lines = <String>[];
+
+    for (final slot in _sanctionNumberSlots()) {
+      final value = _sanctionNumberControllers[slot.key]?.text.trim() ?? '';
+      if (value.isEmpty) continue;
+      lines.add('${slot.label}: $value');
+    }
+
+    if (lines.isEmpty) return null;
+    return lines.join('\n');
   }
 
   Future<void> _pickDate(TextEditingController controller) async {
@@ -1293,10 +1360,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                           value: 'combined',
                           child: Text('Combined'),
                         ),
-                        DropdownMenuItem(
-                          value: 'other',
-                          child: Text('Other'),
-                        ),
+                        DropdownMenuItem(value: 'other', child: Text('Other')),
                       ],
                       onChanged: _isSaving
                           ? null
@@ -1317,18 +1381,12 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                           value: 'rabbit',
                           child: Text('Rabbit'),
                         ),
-                        DropdownMenuItem(
-                          value: 'cavy',
-                          child: Text('Cavy'),
-                        ),
+                        DropdownMenuItem(value: 'cavy', child: Text('Cavy')),
                         DropdownMenuItem(
                           value: 'rabbit_and_cavy',
                           child: Text('Rabbit & Cavy'),
                         ),
-                        DropdownMenuItem(
-                          value: 'other',
-                          child: Text('Other'),
-                        ),
+                        DropdownMenuItem(value: 'other', child: Text('Other')),
                       ],
                       onChanged: _isSaving
                           ? null
@@ -1391,10 +1449,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                           value: 'partial',
                           child: Text('Partial'),
                         ),
-                        DropdownMenuItem(
-                          value: 'paid',
-                          child: Text('Paid'),
-                        ),
+                        DropdownMenuItem(value: 'paid', child: Text('Paid')),
                         DropdownMenuItem(
                           value: 'waived',
                           child: Text('Waived'),
@@ -1448,13 +1503,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                               }
                             },
                     ),
-                    TextFormField(
-                      controller: _sanctionNumberController,
-                      decoration: const InputDecoration(
-                        labelText: 'Sanction number',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
+                    ..._buildSanctionNumberFields(),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -1473,7 +1522,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                   minLines: 3,
                   maxLines: 6,
                   decoration: const InputDecoration(
-                    labelText: 'Staff notes',
+                    labelText: 'Notes to show secretary',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1542,6 +1591,16 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     final date = _parseDate(value);
     return date == null ? null : _dateText(date);
   }
+}
+
+class _SanctionNumberSlot {
+  const _SanctionNumberSlot({
+    required this.key,
+    required this.label,
+  });
+
+  final String key;
+  final String label;
 }
 
 class _SanctionRequest {
@@ -1623,8 +1682,7 @@ class _SanctionRequest {
       locationName: _nullableString(json['location_name']),
       locationAddress: _nullableString(json['location_address']),
       showType: _nullableString(json['show_type']) ?? 'all_breed',
-      sanctionCategory:
-          _nullableString(json['sanction_category']) ?? 'rabbit',
+      sanctionCategory: _nullableString(json['sanction_category']) ?? 'rabbit',
       status: _nullableString(json['status']) ?? 'pending',
       feeDue: _doubleValue(json['fee_due']),
       amountPaid: _doubleValue(json['amount_paid']),
@@ -1713,8 +1771,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -1727,10 +1785,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.text,
-  });
+  const _DetailRow({required this.icon, required this.text});
 
   final IconData icon;
   final String text;
@@ -1768,8 +1823,7 @@ class _ResponsiveFields extends StatelessWidget {
           spacing: 12,
           runSpacing: 14,
           children: [
-            for (final child in children)
-              SizedBox(width: width, child: child),
+            for (final child in children) SizedBox(width: width, child: child),
           ],
         );
       },
@@ -1816,9 +1870,9 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -1854,8 +1908,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1897,9 +1951,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -1924,11 +1978,6 @@ String _money(double value) => '\$${value.toStringAsFixed(2)}';
 String? _nullableString(dynamic value) {
   final text = value?.toString().trim();
   return text == null || text.isEmpty ? null : text;
-}
-
-String? _nullIfBlankValue(String value) {
-  final trimmed = value.trim();
-  return trimmed.isEmpty ? null : trimmed;
 }
 
 DateTime? _nullableDate(dynamic value) {
@@ -2003,8 +2052,8 @@ class _NoActiveSanctionTypesCard extends StatelessWidget {
                   Text(
                     'No active sanction types',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
@@ -2027,10 +2076,7 @@ class _NoActiveSanctionTypesCard extends StatelessWidget {
 }
 
 class _LockedAddOnState extends StatelessWidget {
-  const _LockedAddOnState({
-    required this.clubName,
-    required this.onRefresh,
-  });
+  const _LockedAddOnState({required this.clubName, required this.onRefresh});
 
   final String clubName;
   final VoidCallback onRefresh;
@@ -2061,8 +2107,8 @@ class _LockedAddOnState extends StatelessWidget {
                     'Sanction Requests Add-on Required',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -2124,8 +2170,8 @@ class _SanctionPaymentSettingsCard extends StatelessWidget {
                   Text(
                     'Sanction Payment Options',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
