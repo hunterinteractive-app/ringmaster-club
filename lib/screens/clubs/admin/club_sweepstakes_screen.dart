@@ -1,5 +1,3 @@
-
-
 // lib/screens/clubs/admin/club_sweepstakes_screen.dart
 
 import 'package:flutter/material.dart';
@@ -8,10 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/clubs/club_summary.dart';
 
 class ClubSweepstakesScreen extends StatefulWidget {
-  const ClubSweepstakesScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubSweepstakesScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -33,6 +28,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   List<_SweepstakesDivision> _divisions = const [];
   List<_SweepstakesStanding> _standings = const [];
   List<_SweepstakesAdjustment> _adjustments = const [];
+  List<_ExpectedSweepstakesReport> _expectedReports = const [];
 
   @override
   void initState() {
@@ -80,22 +76,23 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
       ].whereType<String>().join(' ').toLowerCase();
 
       return searchable.contains(query);
-    }).toList()
-      ..sort((a, b) {
-        final divisionCompare = (a.divisionName ?? '').compareTo(
-          b.divisionName ?? '',
-        );
-        if (divisionCompare != 0) return divisionCompare;
-        final pointsCompare = b.totalPoints.compareTo(a.totalPoints);
-        if (pointsCompare != 0) return pointsCompare;
-        return a.exhibitorName.compareTo(b.exhibitorName);
-      });
+    }).toList()..sort((a, b) {
+      final divisionCompare = (a.divisionName ?? '').compareTo(
+        b.divisionName ?? '',
+      );
+      if (divisionCompare != 0) return divisionCompare;
+      final pointsCompare = b.totalPoints.compareTo(a.totalPoints);
+      if (pointsCompare != 0) return pointsCompare;
+      return a.exhibitorName.compareTo(b.exhibitorName);
+    });
   }
 
   List<_SweepstakesDivision> get _selectedSeasonDivisions {
     final season = _selectedSeason;
     if (season == null) return const [];
-    return _divisions.where((division) => division.seasonId == season.id).toList()
+    return _divisions
+        .where((division) => division.seasonId == season.id)
+        .toList()
       ..sort((a, b) {
         final sortCompare = a.sortOrder.compareTo(b.sortOrder);
         if (sortCompare != 0) return sortCompare;
@@ -136,6 +133,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           _divisions = const [];
           _standings = const [];
           _adjustments = const [];
+          _expectedReports = const [];
           _selectedSeasonId = null;
           _isLoading = false;
         });
@@ -146,7 +144,8 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           .from('club_sweepstakes_seasons')
           .select(
             'id,club_id,name,status,start_date,end_date,description,'
-            'points_notes,created_at,updated_at',
+            'points_notes,publication_mode,visibility,public_display_format,'
+            'published_at,created_at,updated_at',
           )
           .eq('club_id', widget.club.clubId)
           .order('start_date', ascending: false);
@@ -179,21 +178,30 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           .eq('club_id', widget.club.clubId)
           .order('created_at', ascending: false);
 
+      final expectedReportsResponse = await _supabase
+          .from('club_sweepstakes_expected_reports')
+          .select(
+            'id,season_id,club_sanction_number,arba_sanction_number,'
+            'show_name,show_date,show_end_date,show_location,'
+            'show_secretary_name,show_secretary_email,due_date,status,'
+            'reminder_count,last_reminder_sent_at,created_at',
+          )
+          .eq('club_id', widget.club.clubId)
+          .order('show_date', ascending: false);
+
       final seasons = (seasonsResponse as List)
           .whereType<Map>()
           .map(
-            (row) => _SweepstakesSeason.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) =>
+                _SweepstakesSeason.fromJson(Map<String, dynamic>.from(row)),
           )
           .toList();
 
       final divisions = (divisionsResponse as List)
           .whereType<Map>()
           .map(
-            (row) => _SweepstakesDivision.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            (row) =>
+                _SweepstakesDivision.fromJson(Map<String, dynamic>.from(row)),
           )
           .toList();
 
@@ -201,17 +209,14 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         for (final division in divisions) division.id: division,
       };
 
-      final standings = (standingsResponse as List)
-          .whereType<Map>()
-          .map((row) {
-            final json = Map<String, dynamic>.from(row);
-            final divisionId = json['division_id']?.toString();
-            return _SweepstakesStanding.fromJson(
-              json,
-              division: divisionId == null ? null : divisionMap[divisionId],
-            );
-          })
-          .toList();
+      final standings = (standingsResponse as List).whereType<Map>().map((row) {
+        final json = Map<String, dynamic>.from(row);
+        final divisionId = json['division_id']?.toString();
+        return _SweepstakesStanding.fromJson(
+          json,
+          division: divisionId == null ? null : divisionMap[divisionId],
+        );
+      }).toList();
 
       final adjustments = (adjustmentsResponse as List)
           .whereType<Map>()
@@ -219,6 +224,14 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
             (row) => _SweepstakesAdjustment.fromJson(
               Map<String, dynamic>.from(row),
               divisionMap: divisionMap,
+            ),
+          )
+          .toList();
+      final expectedReports = (expectedReportsResponse as List)
+          .whereType<Map>()
+          .map(
+            (row) => _ExpectedSweepstakesReport.fromJson(
+              Map<String, dynamic>.from(row),
             ),
           )
           .toList();
@@ -230,6 +243,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         _divisions = divisions;
         _standings = standings;
         _adjustments = adjustments;
+        _expectedReports = expectedReports;
         _selectedSeasonId ??= seasons.isEmpty ? null : seasons.first.id;
         if (_selectedSeasonId != null &&
             !seasons.any((season) => season.id == _selectedSeasonId)) {
@@ -272,10 +286,8 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _SeasonEditorDialog(
-        clubId: widget.club.clubId,
-        existing: existing,
-      ),
+      builder: (_) =>
+          _SeasonEditorDialog(clubId: widget.club.clubId, existing: existing),
     );
 
     if (changed == true) await _loadData();
@@ -324,7 +336,10 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     if (changed == true) await _loadData();
   }
 
-  Future<void> _setSeasonStatus(_SweepstakesSeason season, String status) async {
+  Future<void> _setSeasonStatus(
+    _SweepstakesSeason season,
+    String status,
+  ) async {
     if (!_sweepstakesAddonEnabled) {
       _showLockedFeature();
       return;
@@ -332,10 +347,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     try {
       await _supabase.rpc(
         'set_club_sweepstakes_season_status',
-        params: {
-          'p_season_id': season.id,
-          'p_status': status,
-        },
+        params: {'p_season_id': season.id, 'p_status': status},
       );
       await _loadData();
     } catch (error) {
@@ -353,6 +365,11 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         title: const Text('Sweepstakes'),
         actions: [
           IconButton(
+            tooltip: 'Report intake settings',
+            onPressed: _isLoading ? null : _openReportIntakeSettings,
+            icon: const Icon(Icons.mark_email_unread_outlined),
+          ),
+          IconButton(
             tooltip: 'Refresh',
             onPressed: _isLoading ? null : _loadData,
             icon: const Icon(Icons.refresh),
@@ -363,8 +380,8 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         onPressed: _isLoading
             ? null
             : _sweepstakesAddonEnabled
-                ? () => _openSeasonEditor()
-                : _showLockedFeature,
+            ? () => _openSeasonEditor()
+            : _showLockedFeature,
         icon: Icon(_sweepstakesAddonEnabled ? Icons.add : Icons.lock_outline),
         label: Text(
           _sweepstakesAddonEnabled ? 'New Season' : 'Add-on Required',
@@ -372,6 +389,15 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
       ),
       body: _buildBody(),
     );
+  }
+
+  Future<void> _openReportIntakeSettings() async {
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ReportIntakeSettingsDialog(clubId: widget.club.clubId),
+    );
+    if (changed == true) await _loadData();
   }
 
   Widget _buildBody() {
@@ -400,6 +426,14 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     final filteredStandings = _filteredStandings;
     final divisions = _selectedSeasonDivisions;
     final adjustments = _selectedSeasonAdjustments;
+    final expectedReports = _expectedReports
+        .where(
+          (report) => report.seasonId == null || report.seasonId == season?.id,
+        )
+        .toList();
+    final reportsNeedingAttention = expectedReports
+        .where((report) => report.needsAttention)
+        .length;
 
     return RefreshIndicator(
       onRefresh: _loadData,
@@ -409,9 +443,9 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -501,6 +535,22 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
             ),
             const SizedBox(height: 16),
             _SectionHeader(
+              title: 'Report Reconciliation',
+              actionLabel: '$reportsNeedingAttention Need Attention',
+              onAction: _loadData,
+            ),
+            const SizedBox(height: 8),
+            if (expectedReports.isEmpty)
+              const _InlineEmptyState(
+                title: 'No expected reports yet',
+                message:
+                    'Approved sanctions will appear here automatically so staff can track missing, partial, and processed reports.',
+              )
+            else
+              for (final report in expectedReports.take(10))
+                _ExpectedReportCard(report: report),
+            const SizedBox(height: 20),
+            _SectionHeader(
               title: 'Divisions',
               actionLabel: 'Add Division',
               onAction: () => _openDivisionEditor(),
@@ -564,7 +614,10 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  const DropdownMenuItem(value: 'all', child: Text('All divisions')),
+                  const DropdownMenuItem(
+                    value: 'all',
+                    child: Text('All divisions'),
+                  ),
                   for (final division in divisions)
                     DropdownMenuItem(
                       value: division.id,
@@ -586,7 +639,8 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
             else
               _StandingsTable(
                 standings: filteredStandings,
-                onAdjust: (standing) => _openAdjustmentEditor(standing: standing),
+                onAdjust: (standing) =>
+                    _openAdjustmentEditor(standing: standing),
               ),
             const SizedBox(height: 20),
             _SectionHeader(
@@ -612,10 +666,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
 }
 
 class _LockedAddOnState extends StatelessWidget {
-  const _LockedAddOnState({
-    required this.clubName,
-    required this.onRefresh,
-  });
+  const _LockedAddOnState({required this.clubName, required this.onRefresh});
 
   final String clubName;
   final VoidCallback onRefresh;
@@ -646,8 +697,8 @@ class _LockedAddOnState extends StatelessWidget {
                     'Sweepstakes Add-on Required',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -716,8 +767,8 @@ class _SeasonHeaderCard extends StatelessWidget {
                       Text(
                         season.name,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       Text(season.dateLabel),
                       const SizedBox(height: 8),
@@ -741,13 +792,25 @@ class _SeasonHeaderCard extends StatelessWidget {
                     if (value == 'archived') onArchive?.call();
                   },
                   itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'edit', child: Text('Edit Season')),
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Edit Season'),
+                    ),
                     if (onActivate != null)
-                      const PopupMenuItem(value: 'active', child: Text('Activate')),
+                      const PopupMenuItem(
+                        value: 'active',
+                        child: Text('Activate'),
+                      ),
                     if (onFinalize != null)
-                      const PopupMenuItem(value: 'finalized', child: Text('Finalize')),
+                      const PopupMenuItem(
+                        value: 'finalized',
+                        child: Text('Finalize'),
+                      ),
                     if (onArchive != null)
-                      const PopupMenuItem(value: 'archived', child: Text('Archive')),
+                      const PopupMenuItem(
+                        value: 'archived',
+                        child: Text('Archive'),
+                      ),
                   ],
                 ),
               ],
@@ -780,10 +843,7 @@ class _SeasonHeaderCard extends StatelessWidget {
 }
 
 class _StandingsTable extends StatelessWidget {
-  const _StandingsTable({
-    required this.standings,
-    required this.onAdjust,
-  });
+  const _StandingsTable({required this.standings, required this.onAdjust});
 
   final List<_SweepstakesStanding> standings;
   final ValueChanged<_SweepstakesStanding> onAdjust;
@@ -816,7 +876,9 @@ class _StandingsTable extends StatelessWidget {
                   DataCell(Text(standings[index].divisionName ?? '—')),
                   DataCell(Text(_titleCase(standings[index].species ?? '—'))),
                   DataCell(Text(standings[index].breed ?? '—')),
-                  DataCell(Text(_numberText(standings[index].pointsFromResults))),
+                  DataCell(
+                    Text(_numberText(standings[index].pointsFromResults)),
+                  ),
                   DataCell(Text(_numberText(standings[index].pointsAdjusted))),
                   DataCell(Text(_numberText(standings[index].totalPoints))),
                   DataCell(Text('${standings[index].showCount}')),
@@ -855,20 +917,295 @@ class _AdjustmentCard extends StatelessWidget {
         isThreeLine: adjustment.notes != null,
         trailing: Text(
           _numberText(adjustment.pointsDelta),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
         ),
       ),
     );
   }
 }
 
+class _ExpectedReportCard extends StatelessWidget {
+  const _ExpectedReportCard({required this.report});
+
+  final _ExpectedSweepstakesReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final attention = report.needsAttention;
+    final color = attention ? scheme.error : scheme.primary;
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withAlpha(32),
+          child: Icon(
+            attention
+                ? Icons.assignment_late_outlined
+                : Icons.assignment_turned_in_outlined,
+            color: color,
+          ),
+        ),
+        title: Text(report.showName),
+        subtitle: Text(
+          '${_formatDate(report.showDate)} • Club ${report.clubSanctionNumber ?? '—'} • '
+          'ARBA ${report.arbaSanctionNumber ?? '—'}\n'
+          'Due ${_formatDate(report.dueDate)} • ${_titleCase(report.effectiveStatus)}'
+          '${report.reminderCount == 0 ? '' : ' • ${report.reminderCount} reminder(s)'}',
+        ),
+        isThreeLine: true,
+        trailing: Chip(label: Text(_titleCase(report.effectiveStatus))),
+      ),
+    );
+  }
+}
+
+class _ReportIntakeSettingsDialog extends StatefulWidget {
+  const _ReportIntakeSettingsDialog({required this.clubId});
+
+  final String clubId;
+
+  @override
+  State<_ReportIntakeSettingsDialog> createState() =>
+      _ReportIntakeSettingsDialogState();
+}
+
+class _ReportIntakeSettingsDialogState
+    extends State<_ReportIntakeSettingsDialog> {
+  final _supabase = Supabase.instance.client;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  bool _intakeEnabled = false;
+  bool _remindersEnabled = false;
+  bool _approvalRequired = false;
+  int _dueDays = 30;
+  int _retentionDays = 365;
+  String? _forwardingAddress;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final responses = await Future.wait([
+        _supabase
+            .from('club_sweepstakes_settings')
+            .select(
+              'report_intake_enabled,automatic_report_reminders_enabled,'
+              'reminder_approval_required,report_due_days,report_retention_days',
+            )
+            .eq('club_id', widget.clubId)
+            .maybeSingle(),
+        _supabase
+            .from('clubs')
+            .select('slug')
+            .eq('id', widget.clubId)
+            .maybeSingle(),
+      ]);
+      final row = responses[0];
+      final club = responses[1];
+      final slug = club?['slug']?.toString().trim();
+      if (!mounted) return;
+      setState(() {
+        _intakeEnabled = row?['report_intake_enabled'] == true;
+        _remindersEnabled = row?['automatic_report_reminders_enabled'] == true;
+        _approvalRequired = row?['reminder_approval_required'] == true;
+        _dueDays = _nullableInt(row?['report_due_days']) ?? 30;
+        _retentionDays = _nullableInt(row?['report_retention_days']) ?? 365;
+        _forwardingAddress = slug == null || slug.isEmpty
+            ? null
+            : '$slug@reports.ringmasterone.com';
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Unable to load report intake settings: $error';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    if (_isSaving) return;
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+    try {
+      await _supabase.from('club_sweepstakes_settings').upsert({
+        'club_id': widget.clubId,
+        'report_intake_enabled': _intakeEnabled,
+        'automatic_report_reminders_enabled': _remindersEnabled,
+        'reminder_approval_required': _approvalRequired,
+        'report_due_days': _dueDays,
+        'report_retention_days': _retentionDays,
+        'updated_by': _supabase.auth.currentUser?.id,
+        'updated_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'club_id');
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Unable to save report intake settings: $error';
+        _isSaving = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Report Intake & Reminders'),
+      content: SizedBox(
+        width: 620,
+        child: _isLoading
+            ? const SizedBox(
+                height: 160,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_errorMessage != null) ...[
+                      Text(
+                        _errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      value: _intakeEnabled,
+                      onChanged: _isSaving
+                          ? null
+                          : (value) => setState(() => _intakeEnabled = value),
+                      title: const Text('Enable forwarded report intake'),
+                      subtitle: const Text(
+                        'Allow report packages to enter the club’s restricted review inbox.',
+                      ),
+                    ),
+                    if (_intakeEnabled && _forwardingAddress != null) ...[
+                      const SizedBox(height: 8),
+                      SelectableText(
+                        'Forward reports to\n$_forwardingAddress',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'This address accepts forwarded emails and attachments. Every package stays in staff review until someone approves it.',
+                      ),
+                    ],
+                    const Divider(),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      value: _remindersEnabled,
+                      onChanged: _isSaving
+                          ? null
+                          : (value) =>
+                                setState(() => _remindersEnabled = value),
+                      title: const Text('Send missing-report reminders'),
+                      subtitle: const Text(
+                        'Email the show secretary when an expected sanction report is still missing.',
+                      ),
+                    ),
+                    if (_remindersEnabled)
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        value: _approvalRequired,
+                        onChanged: _isSaving
+                            ? null
+                            : (value) =>
+                                  setState(() => _approvalRequired = value),
+                        title: const Text(
+                          'Require staff approval before sending',
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    _ResponsiveFields(
+                      children: [
+                        DropdownButtonFormField<int>(
+                          initialValue: _dueDays,
+                          decoration: const InputDecoration(
+                            labelText: 'Reminder due after',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [15, 30, 45, 60]
+                              .map(
+                                (days) => DropdownMenuItem(
+                                  value: days,
+                                  child: Text('$days days after show end'),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _isSaving
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    setState(() => _dueDays = value);
+                                  }
+                                },
+                        ),
+                        DropdownButtonFormField<int>(
+                          initialValue: _retentionDays,
+                          decoration: const InputDecoration(
+                            labelText: 'Original report retention',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [365, 730, 1095]
+                              .map(
+                                (days) => DropdownMenuItem(
+                                  value: days,
+                                  child: Text(
+                                    '${days ~/ 365} year${days == 365 ? '' : 's'}',
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _isSaving
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    setState(() => _retentionDays = value);
+                                  }
+                                },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Reports are always held for staff review. No email or PDF can change standings automatically.',
+                    ),
+                  ],
+                ),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _isLoading || _isSaving ? null : _save,
+          child: Text(_isSaving ? 'Saving...' : 'Save settings'),
+        ),
+      ],
+    );
+  }
+}
+
 class _SeasonEditorDialog extends StatefulWidget {
-  const _SeasonEditorDialog({
-    required this.clubId,
-    this.existing,
-  });
+  const _SeasonEditorDialog({required this.clubId, this.existing});
 
   final String clubId;
   final _SweepstakesSeason? existing;
@@ -888,6 +1225,9 @@ class _SeasonEditorDialogState extends State<_SeasonEditorDialog> {
   late final TextEditingController _pointsNotesController;
 
   late String _status;
+  late String _publicationMode;
+  late String _visibility;
+  late String _publicDisplayFormat;
   bool _isSaving = false;
   String? _errorMessage;
 
@@ -896,12 +1236,22 @@ class _SeasonEditorDialogState extends State<_SeasonEditorDialog> {
     super.initState();
     final existing = widget.existing;
     _nameController = TextEditingController(text: existing?.name ?? '');
-    _descriptionController =
-        TextEditingController(text: existing?.description ?? '');
-    _startDateController = TextEditingController(text: _dateText(existing?.startDate));
-    _endDateController = TextEditingController(text: _dateText(existing?.endDate));
-    _pointsNotesController = TextEditingController(text: existing?.pointsNotes ?? '');
+    _descriptionController = TextEditingController(
+      text: existing?.description ?? '',
+    );
+    _startDateController = TextEditingController(
+      text: _dateText(existing?.startDate),
+    );
+    _endDateController = TextEditingController(
+      text: _dateText(existing?.endDate),
+    );
+    _pointsNotesController = TextEditingController(
+      text: existing?.pointsNotes ?? '',
+    );
     _status = existing?.status ?? 'draft';
+    _publicationMode = existing?.publicationMode ?? 'manual';
+    _visibility = existing?.visibility ?? 'members';
+    _publicDisplayFormat = existing?.publicDisplayFormat ?? 'name_state';
   }
 
   @override
@@ -948,6 +1298,9 @@ class _SeasonEditorDialogState extends State<_SeasonEditorDialog> {
           'p_end_date': _dateText(endDate),
           'p_description': _nullIfBlank(_descriptionController.text),
           'p_points_notes': _nullIfBlank(_pointsNotesController.text),
+          'p_publication_mode': _publicationMode,
+          'p_visibility': _visibility,
+          'p_public_display_format': _publicDisplayFormat,
         },
       );
 
@@ -1014,8 +1367,14 @@ class _SeasonEditorDialogState extends State<_SeasonEditorDialog> {
                   items: const [
                     DropdownMenuItem(value: 'draft', child: Text('Draft')),
                     DropdownMenuItem(value: 'active', child: Text('Active')),
-                    DropdownMenuItem(value: 'finalized', child: Text('Finalized')),
-                    DropdownMenuItem(value: 'archived', child: Text('Archived')),
+                    DropdownMenuItem(
+                      value: 'finalized',
+                      child: Text('Finalized'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'archived',
+                      child: Text('Archived'),
+                    ),
                   ],
                   onChanged: _isSaving
                       ? null
@@ -1038,6 +1397,90 @@ class _SeasonEditorDialogState extends State<_SeasonEditorDialog> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 14),
+                _ResponsiveFields(
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: _publicationMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Standings updates',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'manual',
+                          child: Text('Publish on update click'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'live',
+                          child: Text('Live 24/7'),
+                        ),
+                      ],
+                      onChanged: _isSaving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => _publicationMode = value);
+                              }
+                            },
+                    ),
+                    DropdownButtonFormField<String>(
+                      initialValue: _visibility,
+                      decoration: const InputDecoration(
+                        labelText: 'Standings visibility',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'members',
+                          child: Text('Club members only'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'public',
+                          child: Text('Public'),
+                        ),
+                      ],
+                      onChanged: _isSaving
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => _visibility = value);
+                              }
+                            },
+                    ),
+                  ],
+                ),
+                if (_visibility == 'public') ...[
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: _publicDisplayFormat,
+                    decoration: const InputDecoration(
+                      labelText: 'Public exhibitor display',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'name_only',
+                        child: Text('Name only'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'name_state',
+                        child: Text('Name and state'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'name_city_state',
+                        child: Text('Name, city and state'),
+                      ),
+                    ],
+                    onChanged: _isSaving
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() => _publicDisplayFormat = value);
+                            }
+                          },
+                  ),
+                ],
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _descriptionController,
@@ -1127,7 +1570,9 @@ class _DivisionEditorDialogState extends State<_DivisionEditorDialog> {
     final existing = widget.existing;
     _nameController = TextEditingController(text: existing?.name ?? '');
     _codeController = TextEditingController(text: existing?.code ?? '');
-    _descriptionController = TextEditingController(text: existing?.description ?? '');
+    _descriptionController = TextEditingController(
+      text: existing?.description ?? '',
+    );
     _sortOrderController = TextEditingController(
       text: (existing?.sortOrder ?? 0).toString(),
     );
@@ -1314,7 +1759,8 @@ class _AdjustmentEditorDialog extends StatefulWidget {
   final _SweepstakesStanding? standing;
 
   @override
-  State<_AdjustmentEditorDialog> createState() => _AdjustmentEditorDialogState();
+  State<_AdjustmentEditorDialog> createState() =>
+      _AdjustmentEditorDialogState();
 }
 
 class _AdjustmentEditorDialogState extends State<_AdjustmentEditorDialog> {
@@ -1338,12 +1784,15 @@ class _AdjustmentEditorDialogState extends State<_AdjustmentEditorDialog> {
   void initState() {
     super.initState();
     final standing = widget.standing;
-    _divisionId = standing?.divisionId ??
+    _divisionId =
+        standing?.divisionId ??
         (widget.divisions.isEmpty ? null : widget.divisions.first.id);
-    _exhibitorController =
-        TextEditingController(text: standing?.exhibitorName ?? '');
-    _membershipController =
-        TextEditingController(text: standing?.membershipNumber ?? '');
+    _exhibitorController = TextEditingController(
+      text: standing?.exhibitorName ?? '',
+    );
+    _membershipController = TextEditingController(
+      text: standing?.membershipNumber ?? '',
+    );
     _speciesController = TextEditingController(text: standing?.species ?? '');
     _breedController = TextEditingController(text: standing?.breed ?? '');
     _varietyController = TextEditingController(text: standing?.variety ?? '');
@@ -1562,6 +2011,58 @@ class _AdjustmentEditorDialogState extends State<_AdjustmentEditorDialog> {
   }
 }
 
+class _ExpectedSweepstakesReport {
+  const _ExpectedSweepstakesReport({
+    required this.id,
+    required this.showName,
+    required this.showDate,
+    required this.dueDate,
+    required this.status,
+    required this.reminderCount,
+    this.seasonId,
+    this.clubSanctionNumber,
+    this.arbaSanctionNumber,
+  });
+
+  final String id;
+  final String? seasonId;
+  final String? clubSanctionNumber;
+  final String? arbaSanctionNumber;
+  final String showName;
+  final DateTime showDate;
+  final DateTime dueDate;
+  final String status;
+  final int reminderCount;
+
+  String get effectiveStatus {
+    if ((status == 'expected' || status == 'partial') &&
+        dueDate.isBefore(DateTime.now())) {
+      return 'overdue';
+    }
+    return status;
+  }
+
+  bool get needsAttention =>
+      effectiveStatus == 'expected' ||
+      effectiveStatus == 'partial' ||
+      effectiveStatus == 'overdue' ||
+      effectiveStatus == 'needs_review';
+
+  factory _ExpectedSweepstakesReport.fromJson(Map<String, dynamic> json) {
+    return _ExpectedSweepstakesReport(
+      id: json['id'].toString(),
+      seasonId: _nullableString(json['season_id']),
+      clubSanctionNumber: _nullableString(json['club_sanction_number']),
+      arbaSanctionNumber: _nullableString(json['arba_sanction_number']),
+      showName: _nullableString(json['show_name']) ?? 'Unnamed show',
+      showDate: _nullableDate(json['show_date']) ?? DateTime.now(),
+      dueDate: _nullableDate(json['due_date']) ?? DateTime.now(),
+      status: _nullableString(json['status']) ?? 'expected',
+      reminderCount: _nullableInt(json['reminder_count']) ?? 0,
+    );
+  }
+}
+
 class _SweepstakesSeason {
   const _SweepstakesSeason({
     required this.id,
@@ -1569,6 +2070,9 @@ class _SweepstakesSeason {
     required this.status,
     required this.startDate,
     required this.endDate,
+    required this.publicationMode,
+    required this.visibility,
+    required this.publicDisplayFormat,
     this.description,
     this.pointsNotes,
   });
@@ -1578,6 +2082,9 @@ class _SweepstakesSeason {
   final String status;
   final DateTime startDate;
   final DateTime endDate;
+  final String publicationMode;
+  final String visibility;
+  final String publicDisplayFormat;
   final String? description;
   final String? pointsNotes;
 
@@ -1590,6 +2097,10 @@ class _SweepstakesSeason {
       status: _nullableString(json['status']) ?? 'draft',
       startDate: _nullableDate(json['start_date']) ?? DateTime.now(),
       endDate: _nullableDate(json['end_date']) ?? DateTime.now(),
+      publicationMode: _nullableString(json['publication_mode']) ?? 'manual',
+      visibility: _nullableString(json['visibility']) ?? 'members',
+      publicDisplayFormat:
+          _nullableString(json['public_display_format']) ?? 'name_state',
       description: _nullableString(json['description']),
       pointsNotes: _nullableString(json['points_notes']),
     );
@@ -1676,7 +2187,8 @@ class _SweepstakesStanding {
       seasonId: json['season_id'].toString(),
       divisionId: _nullableString(json['division_id']),
       divisionName: division?.name,
-      exhibitorName: _nullableString(json['exhibitor_name']) ?? 'Unknown Exhibitor',
+      exhibitorName:
+          _nullableString(json['exhibitor_name']) ?? 'Unknown Exhibitor',
       membershipNumber: _nullableString(json['membership_number']),
       species: _nullableString(json['species']),
       breed: _nullableString(json['breed']),
@@ -1718,7 +2230,8 @@ class _SweepstakesAdjustment {
     return _SweepstakesAdjustment(
       id: json['id'].toString(),
       seasonId: json['season_id'].toString(),
-      exhibitorName: _nullableString(json['exhibitor_name']) ?? 'Unknown Exhibitor',
+      exhibitorName:
+          _nullableString(json['exhibitor_name']) ?? 'Unknown Exhibitor',
       divisionName: divisionId == null ? null : divisionMap[divisionId]?.name,
       pointsDelta: _nullableDouble(json['points_delta']) ?? 0,
       reason: _nullableString(json['reason']) ?? 'Adjustment',
@@ -1757,8 +2270,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -1788,9 +2301,9 @@ class _SectionHeader extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
         ),
         OutlinedButton.icon(
@@ -1897,8 +2410,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1940,9 +2453,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
