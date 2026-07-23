@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import '../../../services/clubs/club_communications_service.dart';
 import 'club_documents_screen.dart';
 
 class ClubEventsScreen extends StatefulWidget {
@@ -17,6 +18,7 @@ class ClubEventsScreen extends StatefulWidget {
 
 class _ClubEventsScreenState extends State<ClubEventsScreen> {
   final _supabase = Supabase.instance.client;
+  final _communicationsService = ClubCommunicationsService();
   final _searchController = TextEditingController();
 
   bool _isLoading = true;
@@ -224,6 +226,9 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         'set_club_event_status',
         params: {'p_event_id': event.id, 'p_status': status},
       );
+      if (status == 'published' && event.status != 'published') {
+        await _notifyMembersAboutEvent(event, notificationType: 'published');
+      }
       await _loadData();
     } catch (error) {
       if (!mounted) return;
@@ -231,6 +236,19 @@ class _ClubEventsScreenState extends State<ClubEventsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Unable to update event: $error')));
     }
+  }
+
+  Future<void> _notifyMembersAboutEvent(
+    _ClubEvent event, {
+    required String notificationType,
+  }) async {
+    await _notifyClubMembersAboutEvent(
+      supabase: _supabase,
+      communicationsService: _communicationsService,
+      club: widget.club,
+      event: event,
+      notificationType: notificationType,
+    );
   }
 
   @override
@@ -706,6 +724,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
   late String _timezone;
   bool _isSaving = false;
   bool _isLoadingDocuments = false;
+  bool _notifyMembers = false;
   String? _errorMessage;
 
   @override
@@ -743,6 +762,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     _eventType = existing?.eventType ?? 'meeting';
     _status = existing?.status ?? 'draft';
     _visibility = existing?.visibility ?? 'members';
+    _notifyMembers = existing == null && _status == 'published';
   }
 
   @override
@@ -784,7 +804,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     });
 
     try {
-      await _supabase.rpc(
+      final savedEvent = await _supabase.rpc(
         'save_club_event',
         params: {
           'p_event_id': widget.existing?.id,
@@ -811,6 +831,27 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
         },
       );
 
+      if (_notifyMembers && _status == 'published') {
+        final eventId =
+            widget.existing?.id ??
+            _eventIdFromSaveResponse(savedEvent) ??
+            await _findSavedEventId(
+              title: _titleController.text.trim(),
+              startAt: startAt,
+            );
+        if (eventId != null) {
+          await _notifyClubMembersAboutEvent(
+            supabase: _supabase,
+            communicationsService: ClubCommunicationsService(),
+            club: widget.club,
+            event: _eventForNotification(eventId, startAt, endAt),
+            notificationType: widget.existing?.status == 'published'
+                ? 'updated'
+                : 'published',
+          );
+        }
+      }
+
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (error) {
@@ -820,6 +861,50 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
         _errorMessage = 'Unable to save event: $error';
       });
     }
+  }
+
+  Future<String?> _findSavedEventId({
+    required String title,
+    required DateTime startAt,
+  }) async {
+    final rows = await _supabase
+        .from('club_events')
+        .select('id')
+        .eq('club_id', widget.club.clubId)
+        .eq('title', title)
+        .eq('start_at', startAt.toIso8601String())
+        .order('created_at', ascending: false)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    return _nullableString(rows.first['id']);
+  }
+
+  _ClubEvent _eventForNotification(
+    String eventId,
+    DateTime startAt,
+    DateTime? endAt,
+  ) {
+    return _ClubEvent(
+      id: eventId,
+      title: _titleController.text.trim(),
+      description: _nullIfBlank(_descriptionController.text),
+      eventType: _eventType,
+      status: _status,
+      visibility: _visibility,
+      startAt: startAt,
+      endAt: endAt,
+      timezone: _timezone,
+      locationName: _nullIfBlank(_locationNameController.text),
+      locationAddress: _nullIfBlank(_locationAddressController.text),
+      virtualUrl: _nullIfBlank(_virtualUrlController.text),
+      agenda: _nullIfBlank(_agendaController.text),
+      notes: _nullIfBlank(_notesController.text),
+      relatedDocuments: _documents
+          .where((document) => _relatedDocumentIds.contains(document.id))
+          .toList(),
+      requiresRsvp: false,
+      createdAt: widget.existing?.createdAt ?? DateTime.now(),
+    );
   }
 
   Future<void> _pickDateTime(TextEditingController controller) async {
@@ -1042,7 +1127,13 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                           ? null
                           : (value) {
                               if (value != null) {
-                                setState(() => _status = value);
+                                setState(() {
+                                  _status = value;
+                                  if (value == 'published' &&
+                                      widget.existing?.status != 'published') {
+                                    _notifyMembers = true;
+                                  }
+                                });
                               }
                             },
                     ),
@@ -1076,6 +1167,23 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
                     ),
                   ],
                 ),
+                if (_status == 'published') ...[
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _notifyMembers,
+                    onChanged: _isSaving
+                        ? null
+                        : (value) =>
+                              setState(() => _notifyMembers = value ?? false),
+                    title: const Text('Notify active members'),
+                    subtitle: Text(
+                      widget.existing?.status == 'published'
+                          ? 'Send an event-update notification and email, when enabled.'
+                          : 'Send a new-event notification and email, when enabled.',
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 InputDecorator(
                   decoration: const InputDecoration(
@@ -1620,6 +1728,84 @@ IconData _iconForType(String type) {
 String? _nullableString(dynamic value) {
   final text = value?.toString().trim();
   return text == null || text.isEmpty ? null : text;
+}
+
+Future<void> _notifyClubMembersAboutEvent({
+  required SupabaseClient supabase,
+  required ClubCommunicationsService communicationsService,
+  required ClubSummary club,
+  required _ClubEvent event,
+  required String notificationType,
+}) async {
+  try {
+    final memberRows = await supabase
+        .from('club_memberships')
+        .select('user_id,first_name,last_name,showing_name,email')
+        .eq('club_id', club.clubId)
+        .eq('status', 'active');
+
+    final recipients = memberRows.whereType<Map>().map((row) {
+      final member = Map<String, dynamic>.from(row);
+      return ClubCommunicationRecipient(
+        userId: _nullableString(member['user_id']),
+        email: _nullableString(member['email']),
+        name: _eventRecipientName(member),
+      );
+    }).toList();
+
+    await communicationsService.createWorkflowCommunications(
+      clubId: club.clubId,
+      clubName: club.clubName,
+      templateKey: notificationType == 'updated'
+          ? 'event_updated'
+          : 'event_published',
+      relatedType: 'club_event',
+      relatedId: event.id,
+      recipients: recipients,
+      audienceType: 'active_members',
+      messageKind: 'event_notice',
+      variables: _eventCommunicationVariables(event),
+      preferEmailWhenAvailable: true,
+      createdBy: supabase.auth.currentUser?.id,
+    );
+  } catch (error) {
+    debugPrint('Unable to create event communication: $error');
+  }
+}
+
+String _eventRecipientName(Map<String, dynamic> member) {
+  final showingName = _nullableString(member['showing_name']);
+  if (showingName != null) return showingName;
+  final name = [
+    _nullableString(member['first_name']),
+    _nullableString(member['last_name']),
+  ].whereType<String>().join(' ');
+  return name.isEmpty ? 'Member' : name;
+}
+
+Map<String, String> _eventCommunicationVariables(_ClubEvent event) {
+  return {
+    'event_title': event.title,
+    'event_type': _titleCase(event.eventType),
+    'event_date': event.dateLabel,
+    'event_time': event.timeLabel,
+    'event_timezone': event.timezone,
+    'event_location': event.locationName ?? event.locationAddress ?? '',
+    'event_address': event.locationAddress ?? '',
+    'event_virtual_url': event.virtualUrl ?? '',
+    'event_description': event.description ?? '',
+    'event_agenda': event.agenda ?? '',
+    'event_notes': event.notes ?? '',
+  };
+}
+
+String? _eventIdFromSaveResponse(dynamic response) {
+  if (response is String) return _nullableString(response);
+  if (response is Map) return _nullableString(response['id']);
+  if (response is List && response.isNotEmpty && response.first is Map) {
+    return _nullableString((response.first as Map)['id']);
+  }
+  return null;
 }
 
 DateTime? _nullableDate(dynamic value) {

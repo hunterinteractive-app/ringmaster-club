@@ -55,43 +55,101 @@ class ClubCommunicationsService {
     bool preferEmailWhenAvailable = false,
     String? createdBy,
   }) async {
+    final communicationIds = await createWorkflowCommunications(
+      clubId: clubId,
+      clubName: clubName,
+      templateKey: templateKey,
+      relatedType: relatedType,
+      relatedId: relatedId,
+      recipients: [
+        ClubCommunicationRecipient(
+          name: recipientName,
+          userId: recipientUserId,
+          email: recipientEmail,
+        ),
+      ],
+      variables: variables,
+      messageKind: messageKind,
+      audienceType: audienceType,
+      channelOverride: channelOverride,
+      allowEmailWithoutAddon: allowEmailWithoutAddon,
+      preferEmailWhenAvailable: preferEmailWhenAvailable,
+      createdBy: createdBy,
+    );
+    return communicationIds.isEmpty ? null : communicationIds.first;
+  }
+
+  Future<List<String>> createWorkflowCommunications({
+    required String clubId,
+    required String clubName,
+    required String templateKey,
+    required String relatedType,
+    required String relatedId,
+    required List<ClubCommunicationRecipient> recipients,
+    required Map<String, String> variables,
+    String messageKind = 'template',
+    String audienceType = 'workflow',
+    String? channelOverride,
+    bool allowEmailWithoutAddon = false,
+    bool preferEmailWhenAvailable = false,
+    String? createdBy,
+  }) async {
+    if (recipients.isEmpty) return const [];
+
     final template = await loadEnabledCommunicationTemplate(
       clubId: clubId,
       templateKey: templateKey,
     );
-    if (template == null) return null;
+    if (template == null) return const [];
 
     final emailAddonEnabled = allowEmailWithoutAddon
         ? true
         : await _clubEmailAddonEnabled(clubId);
-    final normalizedRecipientEmail = _nullableString(recipientEmail);
-    final canEmail = emailAddonEnabled && normalizedRecipientEmail != null;
-
-    final channel = preferEmailWhenAvailable && canEmail
-        ? 'both'
-        : _effectiveChannel(
-            requestedChannel: channelOverride ?? template.channelDefault,
-            emailAddonEnabled: emailAddonEnabled,
-            recipientEmail: normalizedRecipientEmail,
-          );
-
-    final allVariables = <String, String>{
-      'club_name': clubName,
-      'recipient_name': recipientName,
-      ...variables,
-    };
-    final subject = renderTemplate(
-      template.subject.isEmpty ? 'Update from {{club_name}}' : template.subject,
-      allVariables,
-    );
-    final body = renderTemplate(
-      template.body.isEmpty ? template.message : template.body,
-      allVariables,
-    );
     final now = DateTime.now().toIso8601String();
-    final hasNotification = channel == 'notification' || channel == 'both';
-    final hasEmail = channel == 'email' || channel == 'both';
-    final status = hasEmail ? 'queued' : 'notification_created';
+    final deliveries = recipients.map((recipient) {
+      final recipientEmail = _nullableString(recipient.email);
+      final canEmail = emailAddonEnabled && recipientEmail != null;
+      final channel = preferEmailWhenAvailable && canEmail
+          ? 'both'
+          : _effectiveChannel(
+              requestedChannel: channelOverride ?? template.channelDefault,
+              emailAddonEnabled: emailAddonEnabled,
+              recipientEmail: recipientEmail,
+            );
+      final allVariables = <String, String>{
+        'club_name': clubName,
+        'recipient_name': recipient.name,
+        ...variables,
+      };
+      final subject = renderTemplate(
+        template.subject.isEmpty
+            ? 'Update from {{club_name}}'
+            : template.subject,
+        allVariables,
+      );
+      final body = renderTemplate(
+        template.body.isEmpty ? template.message : template.body,
+        allVariables,
+      );
+      final hasEmail = channel == 'email' || channel == 'both';
+      return _WorkflowDelivery(
+        recipient: recipient,
+        recipientEmail: recipientEmail,
+        channel: channel,
+        subject: subject,
+        body: body,
+        hasEmail: hasEmail,
+      );
+    }).toList();
+
+    final notificationCount = deliveries
+        .where(
+          (delivery) =>
+              delivery.channel == 'notification' || delivery.channel == 'both',
+        )
+        .length;
+    final emailCount = deliveries.where((delivery) => delivery.hasEmail).length;
+    final hasEmail = emailCount > 0;
 
     final batch = await _client
         .from('club_communication_batches')
@@ -102,9 +160,9 @@ class ClubCommunicationsService {
           'subject': template.subject,
           'body': template.body.isEmpty ? template.message : template.body,
           'audience_type': audienceType,
-          'recipient_count': 1,
-          'notification_count': hasNotification ? 1 : 0,
-          'email_count': hasEmail ? 1 : 0,
+          'recipient_count': deliveries.length,
+          'notification_count': notificationCount,
+          'email_count': emailCount,
           'status': hasEmail ? 'queued' : 'sent',
           'created_by': createdBy,
           'sent_at': hasEmail ? null : now,
@@ -113,31 +171,37 @@ class ClubCommunicationsService {
         .select('id')
         .single();
 
-    final communication = await _client
+    final communicationRows = await _client
         .from('club_communications')
-        .insert({
-          'club_id': clubId,
-          'batch_id': batch['id'],
-          'template_key': templateKey,
-          'message_kind': messageKind,
-          'related_type': relatedType,
-          'related_id': relatedId,
-          'recipient_user_id': recipientUserId,
-          'recipient_email': normalizedRecipientEmail,
-          'recipient_name': recipientName,
-          'channel': channel,
-          'subject': subject,
-          'body': body,
-          'message': body,
-          'status': status,
-          'sent_at': hasEmail ? null : now,
-          'created_by': createdBy,
-          'updated_at': now,
-        })
-        .select('id')
-        .single();
+        .insert([
+          for (final delivery in deliveries)
+            {
+              'club_id': clubId,
+              'batch_id': batch['id'],
+              'template_key': templateKey,
+              'message_kind': messageKind,
+              'related_type': relatedType,
+              'related_id': relatedId,
+              'recipient_user_id': delivery.recipient.userId,
+              'recipient_email': delivery.recipientEmail,
+              'recipient_name': delivery.recipient.name,
+              'channel': delivery.channel,
+              'subject': delivery.subject,
+              'body': delivery.body,
+              'message': delivery.body,
+              'status': delivery.hasEmail ? 'queued' : 'notification_created',
+              'sent_at': delivery.hasEmail ? null : now,
+              'created_by': createdBy,
+              'updated_at': now,
+            },
+        ])
+        .select('id');
 
-    return communication['id']?.toString();
+    return communicationRows
+        .whereType<Map>()
+        .map((row) => row['id']?.toString())
+        .whereType<String>()
+        .toList();
   }
 
   Future<bool> _clubEmailAddonEnabled(String clubId) async {
@@ -180,6 +244,36 @@ class ClubCommunicationsService {
 
     return rendered;
   }
+}
+
+class ClubCommunicationRecipient {
+  const ClubCommunicationRecipient({
+    required this.name,
+    this.userId,
+    this.email,
+  });
+
+  final String name;
+  final String? userId;
+  final String? email;
+}
+
+class _WorkflowDelivery {
+  const _WorkflowDelivery({
+    required this.recipient,
+    required this.recipientEmail,
+    required this.channel,
+    required this.subject,
+    required this.body,
+    required this.hasEmail,
+  });
+
+  final ClubCommunicationRecipient recipient;
+  final String? recipientEmail;
+  final String channel;
+  final String subject;
+  final String body;
+  final bool hasEmail;
 }
 
 class ClubCommunicationTemplate {
