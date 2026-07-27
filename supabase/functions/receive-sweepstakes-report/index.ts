@@ -50,18 +50,49 @@ Deno.serve(async (request) => {
     const basePath = `sweepstakes-reports/${packageId}`;
     await uploadJson(club.bucket, `${basePath}/source-email.json`, retainedEmail(email));
     const manifest: JsonObject[] = [];
-    for (const attachment of arrayData(await resendJson(`/emails/receiving/${emailId}/attachments`))) {
+    // Resend can make the attachment list available shortly after the
+    // email-received event. The retrieved email itself also contains the
+    // attachment metadata, so use it as a fallback rather than dropping files.
+    const listedAttachments = arrayData(
+      await resendJson(`/emails/receiving/${emailId}/attachments`),
+    );
+    const attachments = listedAttachments.length
+      ? listedAttachments
+      : arrayData(email.attachments);
+    for (const attachment of attachments) {
       const attachmentId = stringValue(attachment.id);
       if (!attachmentId) continue;
-      const fileName = safeFileName(stringValue(attachment.filename) ?? `attachment-${attachmentId}`);
+      const attachmentDetail = objectData(
+        await resendJson(`/emails/receiving/${emailId}/attachments/${attachmentId}`),
+      );
+      const fileName = safeFileName(
+        stringValue(attachmentDetail.filename) ??
+            stringValue(attachment.filename) ??
+            `attachment-${attachmentId}`,
+      );
       const storagePath = `${basePath}/attachments/${fileName}`;
-      const file = await resendFile(`/emails/receiving/${emailId}/attachments/${attachmentId}`);
-      await uploadFile(club.bucket, storagePath, file, stringValue(attachment.content_type) ?? "application/octet-stream");
+      const downloadUrl =
+        stringValue(attachmentDetail.download_url) ??
+        stringValue(attachment.download_url);
+      if (!downloadUrl) {
+        throw new Error(`Resend did not provide a download URL for ${fileName}.`);
+      }
+      const file = await downloadResendFile(downloadUrl);
+      await uploadFile(
+        club.bucket,
+        storagePath,
+        file,
+        stringValue(attachmentDetail.content_type) ??
+            stringValue(attachment.content_type) ??
+            "application/octet-stream",
+      );
       manifest.push({
         provider_attachment_id: attachmentId,
         file_name: fileName,
-        content_type: stringValue(attachment.content_type),
-        size: numberValue(attachment.size),
+        content_type:
+          stringValue(attachmentDetail.content_type) ??
+          stringValue(attachment.content_type),
+        size: numberValue(attachmentDetail.size) ?? numberValue(attachment.size),
         storage_path: storagePath,
       });
     }
@@ -153,14 +184,16 @@ async function resendJson(path: string) {
   return await response.json();
 }
 
-async function resendFile(path: string) {
-  const response = await fetch(`https://api.resend.com${path}`, { headers: { authorization: `Bearer ${resendApiKey}` } });
+async function downloadResendFile(url: string) {
+  const response = await fetch(url);
   if (!response.ok) throw new Error(await response.text());
   return await response.arrayBuffer();
 }
 
 async function uploadJson(bucket: string, path: string, value: JsonObject) {
-  await uploadFile(bucket, path, new TextEncoder().encode(JSON.stringify(value)).buffer, "application/json");
+  // Club document buckets intentionally allow report files and plain text, not
+  // arbitrary JSON. The retained metadata is a human-readable audit record.
+  await uploadFile(bucket, path, new TextEncoder().encode(JSON.stringify(value, null, 2)).buffer, "text/plain");
 }
 
 async function uploadFile(bucket: string, path: string, body: ArrayBuffer, contentType: string) {

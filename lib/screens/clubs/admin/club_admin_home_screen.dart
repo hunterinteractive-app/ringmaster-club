@@ -7,6 +7,7 @@ import 'club_communications_screen.dart';
 import 'club_documents_screen.dart';
 import 'club_events_screen.dart';
 import 'club_members_screen.dart';
+import 'club_onboarding_screen.dart';
 import 'club_payments_screen.dart';
 import 'club_reports_screen.dart';
 import 'club_staff_permissions_screen.dart';
@@ -19,10 +20,7 @@ import 'sanction_requests_screen.dart';
 import 'sanction_types_screen.dart';
 
 class ClubAdminHomeScreen extends StatefulWidget {
-  const ClubAdminHomeScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubAdminHomeScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -66,9 +64,7 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
 
       if (!mounted) return;
       setState(() {
-        _features = _ClubFeatureAccess.fromJson(
-          Map<String, dynamic>.from(row),
-        );
+        _features = _ClubFeatureAccess.fromJson(Map<String, dynamic>.from(row));
         _isLoadingFeatures = false;
       });
     } catch (error) {
@@ -103,10 +99,8 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
   }
 
   VoidCallback _lockedTap(String featureName, String addOnName) {
-    return () => _showLockedFeature(
-          featureName: featureName,
-          addOnName: addOnName,
-        );
+    return () =>
+        _showLockedFeature(featureName: featureName, addOnName: addOnName);
   }
 
   @override
@@ -120,9 +114,9 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
         children: [
           Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 10),
           LayoutBuilder(
@@ -143,16 +137,26 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
       );
     }
 
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text('${club.displayName} Management'),
-      ),
+      appBar: AppBar(title: Text('${club.displayName} Management')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
             _AdminHeaderCard(club: club),
+            const SizedBox(height: 16),
+            _AdminFeatureCard(
+              width: double.infinity,
+              icon: Icons.rocket_launch_outlined,
+              title: 'Bring Your Club Onboard',
+              description:
+                  'Import your membership roster and historical sweepstakes reports.',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ClubOnboardingScreen(club: club),
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             _FeatureAccessSummaryCard(
               isLoading: _isLoadingFeatures,
@@ -163,9 +167,9 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
             const SizedBox(height: 20),
             Text(
               'Club Management',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
@@ -213,7 +217,8 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => MembershipApplicationsScreen(club: club),
+                        builder: (_) =>
+                            MembershipApplicationsScreen(club: club),
                       ),
                     );
                   },
@@ -347,10 +352,7 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
                       'Manage seasons, reports, point rules, imports, approvals, and standings.',
                   addOnName: 'Sweepstakes Add-on',
                   isEnabled: _features.sweepstakes,
-                  onLockedTap: _lockedTap(
-                    'Sweepstakes',
-                    'Sweepstakes Add-on',
-                  ),
+                  onLockedTap: _lockedTap('Sweepstakes', 'Sweepstakes Add-on'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -455,8 +457,8 @@ class _AdminHeaderCard extends StatelessWidget {
                   Text(
                     club.clubName,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Wrap(
@@ -496,12 +498,12 @@ class _AdminHeaderCard extends StatelessWidget {
         .split(RegExp(r'[_\s-]+'))
         .where((part) => part.isNotEmpty)
         .map(
-          (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+          (part) =>
+              '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
 }
-
 
 class _ClubAvatar extends StatelessWidget {
   const _ClubAvatar({required this.club});
@@ -514,14 +516,12 @@ class _ClubAvatar extends StatelessWidget {
 
     return CircleAvatar(
       radius: 32,
-      foregroundImage:
-          logoUrl != null && logoUrl.isNotEmpty ? NetworkImage(logoUrl) : null,
+      foregroundImage: logoUrl != null && logoUrl.isNotEmpty
+          ? NetworkImage(logoUrl)
+          : null,
       child: Text(
         _initials(club.displayName),
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -588,9 +588,8 @@ class _FeatureAccessSummaryCard extends StatelessWidget {
                     children: [
                       Text(
                         'Enabled Club Tools',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -626,10 +625,7 @@ class _FeatureAccessSummaryCard extends StatelessWidget {
                   label: 'Events & Meetings',
                   enabled: features.eventsMeetings,
                 ),
-                _FeatureChip(
-                  label: 'Email',
-                  enabled: features.email,
-                ),
+                _FeatureChip(label: 'Email', enabled: features.email),
                 _FeatureChip(
                   label: 'Sweepstakes',
                   enabled: features.sweepstakes,
@@ -659,11 +655,10 @@ class _FeatureChip extends StatelessWidget {
         size: 18,
       ),
       label: Text(label),
-      backgroundColor:
-          enabled ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-      side: BorderSide(
-        color: enabled ? scheme.primary : scheme.outlineVariant,
-      ),
+      backgroundColor: enabled
+          ? scheme.primaryContainer
+          : scheme.surfaceContainerHighest,
+      side: BorderSide(color: enabled ? scheme.primary : scheme.outlineVariant),
       visualDensity: VisualDensity.compact,
     );
   }
@@ -679,11 +674,11 @@ class _ClubFeatureAccess {
   });
 
   const _ClubFeatureAccess.base()
-      : membershipManagement = false,
-        sanctionRequests = false,
-        eventsMeetings = false,
-        email = false,
-        sweepstakes = false;
+    : membershipManagement = false,
+      sanctionRequests = false,
+      eventsMeetings = false,
+      email = false,
+      sweepstakes = false;
 
   final bool membershipManagement;
   final bool sanctionRequests;
@@ -693,8 +688,7 @@ class _ClubFeatureAccess {
 
   factory _ClubFeatureAccess.fromJson(Map<String, dynamic> json) {
     return _ClubFeatureAccess(
-      membershipManagement:
-          json['membership_management_addon_enabled'] == true,
+      membershipManagement: json['membership_management_addon_enabled'] == true,
       sanctionRequests: json['sanction_requests_addon_enabled'] == true,
       eventsMeetings: json['events_meetings_addon_enabled'] == true,
       email: json['email_addon_enabled'] == true,
@@ -767,9 +761,8 @@ class _AdminFeatureCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       if (!isEnabled && addOnName != null) ...[
                         const SizedBox(height: 4),

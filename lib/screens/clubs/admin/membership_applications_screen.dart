@@ -58,7 +58,7 @@ class _MembershipApplicationsScreenState
             .select(
               'id,club_id,user_id,membership_type_id,application_type,status,'
               'first_name,last_name,showing_name,email,phone,address_line1,'
-              'address_line2,city,state,postal_code,country,date_of_birth,arba_number,'
+              'address_line2,city,state,postal_code,country,date_of_birth,arba_number,recommendation,'
               'submitted_at,payment_status,staff_notes,applicant_message,'
               'application_details,reviewed_at,reviewed_by,created_at',
             )
@@ -1159,6 +1159,7 @@ class _MembershipApplication {
     this.country,
     this.dateOfBirth,
     this.arbaNumber,
+    this.recommendation,
     this.staffNotes,
     this.applicantMessage,
     this.applicationDetails,
@@ -1185,6 +1186,7 @@ class _MembershipApplication {
   final String? country;
   final DateTime? dateOfBirth;
   final String? arbaNumber;
+  final String? recommendation;
   final DateTime submittedAt;
   final String paymentStatus;
   final String? staffNotes;
@@ -1281,6 +1283,7 @@ class _MembershipApplication {
       country: _nullableString(json['country']),
       dateOfBirth: _nullableDate(json['date_of_birth']),
       arbaNumber: _nullableString(json['arba_number']),
+      recommendation: _nullableString(json['recommendation']),
       submittedAt: _nullableDate(json['submitted_at']) ?? DateTime.now(),
       paymentStatus: _nullableString(json['payment_status']) ?? 'unpaid',
       staffNotes: _nullableString(json['staff_notes']),

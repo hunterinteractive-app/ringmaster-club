@@ -35,6 +35,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   final _postalCodeController = TextEditingController();
   final _dateOfBirthController = TextEditingController();
   final _arbaNumberController = TextEditingController();
+  final _recommendationController = TextEditingController();
   final _countryController = TextEditingController(text: 'US');
   final _notesController = TextEditingController();
 
@@ -84,6 +85,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
     _postalCodeController.dispose();
     _dateOfBirthController.dispose();
     _arbaNumberController.dispose();
+    _recommendationController.dispose();
     _countryController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -714,6 +716,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
             'postal_code': _emptyToNull(_postalCodeController.text),
             'date_of_birth': _emptyToNull(_dateOfBirthController.text),
             'arba_number': _emptyToNull(_arbaNumberController.text),
+            'recommendation': _emptyToNull(_recommendationController.text),
             'country': _countryController.text.trim().isEmpty
                 ? 'US'
                 : _countryController.text.trim(),
@@ -1224,6 +1227,16 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                 }
                 return null;
               },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _recommendationController,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Recommendation (optional)',
+                helperText: 'For example, the member who referred you.',
+              ),
             ),
             const SizedBox(height: 20),
             const _SectionTitle(title: 'Address'),
