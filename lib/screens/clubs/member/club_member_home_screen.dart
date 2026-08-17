@@ -3,21 +3,23 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import 'club_member_announcements_screen.dart';
+import 'club_member_documents_screen.dart';
+import 'club_member_events_screen.dart';
+import 'club_membership_cards_screen.dart';
+import 'club_member_membership_screen.dart';
+import 'club_member_payments_screen.dart';
+import 'club_member_sweepstakes_standings_screen.dart';
 
 class ClubMemberHomeScreen extends StatelessWidget {
-  const ClubMemberHomeScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubMemberHomeScreen({super.key, required this.club});
 
   final ClubSummary club;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(club.displayName),
-      ),
+      appBar: AppBar(title: Text(club.displayName)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
@@ -26,9 +28,9 @@ class ClubMemberHomeScreen extends StatelessWidget {
             const SizedBox(height: 20),
             Text(
               'Member Portal',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
@@ -41,60 +43,80 @@ class ClubMemberHomeScreen extends StatelessWidget {
               title: 'My Membership',
               subtitle:
                   'View your membership status, number, type, and renewal details.',
-              onTap: () => _showComingSoon(context, 'My Membership'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMemberMembershipScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.credit_card_outlined,
-              title: 'Membership Cards',
+              title: 'Membership Card',
               subtitle:
-                  'Access digital club cards and store membership cards from other organizations.',
-              onTap: () => _showComingSoon(context, 'Membership Cards'),
+                  'View your digital membership card for ${club.displayName}.',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMembershipCardsScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.emoji_events_outlined,
               title: 'Sweepstakes Standings',
               subtitle:
                   'View published standings, seasons, points, and eligible show results.',
-              onTap: () => _showComingSoon(context, 'Sweepstakes Standings'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      ClubMemberSweepstakesStandingsScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.event_outlined,
               title: 'Meetings & Events',
               subtitle:
                   'See upcoming meetings, shows, deadlines, and club activities.',
-              onTap: () => _showComingSoon(context, 'Meetings & Events'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMemberEventsScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.folder_outlined,
               title: 'Club Documents',
               subtitle:
                   'Find constitution and bylaws, show rules, forms, minutes, and shared files.',
-              onTap: () => _showComingSoon(context, 'Club Documents'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMemberDocumentsScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.receipt_long_outlined,
               title: 'Payments & Receipts',
               subtitle:
                   'Review dues payments, renewal charges, receipts, and payment history.',
-              onTap: () => _showComingSoon(context, 'Payments & Receipts'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMemberPaymentsScreen(club: club),
+                ),
+              ),
             ),
             _MemberPortalTile(
               icon: Icons.campaign_outlined,
               title: 'Club Announcements',
-              subtitle:
-                  'Read updates and notices shared by club leadership.',
-              onTap: () => _showComingSoon(context, 'Club Announcements'),
+              subtitle: 'Read updates and notices shared by club leadership.',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ClubMemberAnnouncementsScreen(club: club),
+                ),
+              ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showComingSoon(BuildContext context, String featureName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$featureName is coming next.'),
       ),
     );
   }
@@ -126,8 +148,8 @@ class _MemberHeaderCard extends StatelessWidget {
                   Text(
                     club.clubName,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Wrap(
@@ -140,8 +162,8 @@ class _MemberHeaderCard extends StatelessWidget {
                             : Icons.person_outline,
                         label: club.isStaff
                             ? (roleName != null && roleName.isNotEmpty
-                                ? roleName
-                                : 'Club Staff')
+                                  ? roleName
+                                  : 'Club Staff')
                             : 'Member',
                       ),
                       if (membershipStatus != null &&
@@ -166,7 +188,8 @@ class _MemberHeaderCard extends StatelessWidget {
         .split(RegExp(r'[_\s-]+'))
         .where((part) => part.isNotEmpty)
         .map(
-          (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+          (part) =>
+              '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
@@ -183,14 +206,12 @@ class _ClubAvatar extends StatelessWidget {
 
     return CircleAvatar(
       radius: 32,
-      foregroundImage:
-          logoUrl != null && logoUrl.isNotEmpty ? NetworkImage(logoUrl) : null,
+      foregroundImage: logoUrl != null && logoUrl.isNotEmpty
+          ? NetworkImage(logoUrl)
+          : null,
       child: Text(
         _initials(club.displayName),
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -214,10 +235,7 @@ class _ClubAvatar extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.icon,
-    required this.label,
-  });
+  const _StatusChip({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -255,10 +273,7 @@ class _MemberPortalTile extends StatelessWidget {
           vertical: 10,
         ),
         leading: Icon(icon, size: 30),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text(subtitle),

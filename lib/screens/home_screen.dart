@@ -14,6 +14,7 @@ import '../theme/app_theme.dart';
 import 'clubs/club_portal_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
 import 'clubs/member/club_member_home_screen.dart';
+import 'clubs/member/member_network_screen.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -862,7 +863,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             title: 'Events',
                             description:
                                 'Review upcoming club meetings and events.',
-                            onTap: () => _comingSoon('Events'),
+                            onTap: () =>
+                                _openMemberNetwork(MemberNetworkView.events),
                           ),
                           _HomeActionCard(
                             width: width,
@@ -870,7 +872,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             title: 'Resources',
                             description:
                                 'Access club documents, forms, and resources.',
-                            onTap: () => _comingSoon('Resources'),
+                            onTap: () =>
+                                _openMemberNetwork(MemberNetworkView.resources),
                           ),
                           _HomeActionCard(
                             width: width,
@@ -878,7 +881,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             title: 'Announcements',
                             description:
                                 'See the latest news from your organizations.',
-                            onTap: () => _comingSoon('Announcements'),
+                            onTap: () => _openMemberNetwork(
+                              MemberNetworkView.announcements,
+                            ),
                           ),
                           _HomeActionCard(
                             width: width,
@@ -886,7 +891,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             title: 'Membership',
                             description:
                                 'Review your membership details and status.',
-                            onTap: () => _comingSoon('Membership'),
+                            onTap: () => _openMemberNetwork(
+                              MemberNetworkView.memberships,
+                            ),
                           ),
                           _HomeActionCard(
                             width: width,
@@ -909,10 +916,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
+  Future<void> _openMemberNetwork(MemberNetworkView view) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => MemberNetworkScreen(view: view)),
+    );
   }
 }
 

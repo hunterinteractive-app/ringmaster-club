@@ -8,9 +8,14 @@ import '../../../services/clubs/club_communications_service.dart';
 import '../../../services/clubs/club_service.dart';
 
 class ClubMembershipApplyScreen extends StatefulWidget {
-  const ClubMembershipApplyScreen({super.key, required this.club});
+  const ClubMembershipApplyScreen({
+    super.key,
+    required this.club,
+    this.isRenewal = false,
+  });
 
   final ClubSummary club;
+  final bool isRenewal;
 
   @override
   State<ClubMembershipApplyScreen> createState() =>
@@ -62,6 +67,9 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   bool _isWiringShowingName = false;
   bool _prefilledFromSavedAccount = false;
   String? _prefillSourceLabel;
+
+  String get _applicationType =>
+      widget.isRenewal ? 'renewal' : 'new_membership';
 
   @override
   void initState() {
@@ -214,6 +222,93 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
 
     _prefilledFromSavedAccount = true;
     _prefillSourceLabel = _bestShowingNameForExhibitor(primaryExhibitor);
+  }
+
+  /// A renewal must use the current club membership as its source of truth,
+  /// rather than only the account/exhibitor profile used for a new application.
+  Future<Map<String, dynamic>?> _prefillFromCurrentMembership() async {
+    if (!widget.isRenewal) return null;
+
+    final user = _supabase.auth.currentUser;
+    if (user == null) return null;
+
+    const fields =
+        'id,membership_type_id,first_name,last_name,showing_name,email,phone,'
+        'address_line1,address_line2,city,state,postal_code,country,'
+        'date_of_birth,arba_number,auto_renew,linked_people';
+    Map<String, dynamic>? row;
+    final summaryMembershipId = widget.club.membershipId?.trim();
+    if (summaryMembershipId != null && summaryMembershipId.isNotEmpty) {
+      row = await _supabase
+          .from('club_memberships')
+          .select(fields)
+          .eq('club_id', widget.club.clubId)
+          .eq('id', summaryMembershipId)
+          .maybeSingle();
+    }
+    row ??= await _supabase
+        .from('club_memberships')
+        .select(fields)
+        .eq('club_id', widget.club.clubId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+    final email = user.email?.trim();
+    if (row == null && email != null && email.isNotEmpty) {
+      row = await _supabase
+          .from('club_memberships')
+          .select(fields)
+          .eq('club_id', widget.club.clubId)
+          .eq('email', email)
+          .limit(1)
+          .maybeSingle();
+    }
+    if (row == null) return null;
+
+    void setValue(TextEditingController controller, String? value) {
+      if (value != null) controller.text = value;
+    }
+
+    setValue(_firstNameController, row['first_name']?.toString());
+    setValue(_lastNameController, row['last_name']?.toString());
+    final showingName = row['showing_name']?.toString().trim();
+    if (showingName != null && showingName.isNotEmpty) {
+      _setShowingNameProgrammatically(showingName);
+      _showingNameTouched = true;
+    }
+    setValue(_emailController, row['email']?.toString());
+    setValue(_phoneController, row['phone']?.toString());
+    setValue(_addressLine1Controller, row['address_line1']?.toString());
+    setValue(_addressLine2Controller, row['address_line2']?.toString());
+    setValue(_cityController, row['city']?.toString());
+    setValue(_stateController, row['state']?.toString());
+    setValue(_postalCodeController, row['postal_code']?.toString());
+    setValue(_dateOfBirthController, _formatDateForInput(row['date_of_birth']));
+    setValue(_arbaNumberController, row['arba_number']?.toString());
+    setValue(_countryController, row['country']?.toString());
+    final linkedPeople = row['linked_people'];
+    if (linkedPeople is Map) {
+      final primaryId = linkedPeople['primary_exhibitor_id']?.toString();
+      _selectedLinkedExhibitor = _linkedExhibitors
+          .where((exhibitor) => exhibitor['id']?.toString() == primaryId)
+          .firstOrNull;
+      final additionalIds = linkedPeople['additional_exhibitor_ids'];
+      if (additionalIds is List) {
+        final availableIds = _linkedExhibitors
+            .map((exhibitor) => exhibitor['id']?.toString())
+            .whereType<String>()
+            .toSet();
+        _selectedAdditionalExhibitorIds
+          ..clear()
+          ..addAll(
+            additionalIds
+                .map((id) => id.toString())
+                .where(availableIds.contains),
+          );
+      }
+    }
+    _prefilledFromSavedAccount = true;
+    _prefillSourceLabel = 'your current club membership';
+    return row;
   }
 
   void _prefillFromAuthUser(User user) {
@@ -633,6 +728,12 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
           .toList();
 
       await _prefillFromSavedAccount();
+      final currentMembership = await _prefillFromCurrentMembership();
+      if (widget.isRenewal && currentMembership == null) {
+        throw StateError(
+          'Your current membership could not be found. Return to My Membership and refresh before requesting a renewal.',
+        );
+      }
 
       if (!mounted) return;
 
@@ -650,8 +751,17 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
         _treasurerState = clubResponse['treasurer_state']?.toString();
         _treasurerZip = clubResponse['treasurer_zip']?.toString();
         _membershipTypes = types;
-        _selectedType = types.isEmpty ? null : types.first;
-        _autoRenewEnabled = _selectedType?.allowAutoRenew == true;
+        _selectedType = types.isEmpty
+            ? null
+            : types.firstWhere(
+                (type) =>
+                    type.id ==
+                    currentMembership?['membership_type_id']?.toString(),
+                orElse: () => types.first,
+              );
+        _autoRenewEnabled =
+            currentMembership?['auto_renew'] == true &&
+            _selectedType?.allowAutoRenew == true;
         _paymentMethod = _acceptsOnlinePayments ? 'online' : 'check';
         _isLoading = false;
       });
@@ -694,13 +804,36 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       final now = DateTime.now().toIso8601String();
       final checkoutAmountCents = _checkoutAmountCents;
 
+      if (widget.isRenewal) {
+        var pendingRenewalQuery = _supabase
+            .from('club_membership_applications')
+            .select('id')
+            .eq('club_id', widget.club.clubId)
+            .eq('application_type', 'renewal')
+            .inFilter('status', ['pending', 'needs_information']);
+        if (user?.id != null) {
+          pendingRenewalQuery = pendingRenewalQuery.eq('user_id', user!.id);
+        } else {
+          final email = _emailController.text.trim();
+          if (email.isNotEmpty) {
+            pendingRenewalQuery = pendingRenewalQuery.eq('email', email);
+          }
+        }
+        final pendingRenewals = await pendingRenewalQuery.limit(1);
+        if (pendingRenewals.isNotEmpty) {
+          throw StateError(
+            'You already have a renewal request awaiting club review. Contact the club if you need to update it.',
+          );
+        }
+      }
+
       final applicationResponse = await _supabase
           .from('club_membership_applications')
           .insert({
             'club_id': widget.club.clubId,
             'user_id': user?.id,
             'membership_type_id': selectedType.id,
-            'application_type': 'new_membership',
+            'application_type': _applicationType,
             'status': 'pending',
             'payment_status': checkoutAmountCents > 0 ? 'unpaid' : 'waived',
             'submitted_at': now,
@@ -763,8 +896,9 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       if (checkoutAmountCents > 0 && _isCheckPaymentSelected) {
         if (!mounted) return;
         setState(() {
-          _successMessage =
-              'Your application was submitted. Mail your check to complete payment.';
+          _successMessage = widget.isRenewal
+              ? 'Your renewal request was submitted. Mail your check to complete payment.'
+              : 'Your application was submitted. Mail your check to complete payment.';
         });
         await _showCheckPaymentDialog();
         _returnToMemberHomeAfterCheckSubmit();
@@ -774,24 +908,29 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
           sourceType: 'membership_due',
           sourceId: applicationId,
           amountCents: checkoutAmountCents,
-          description: '${selectedType.name} membership application',
+          description:
+              '${selectedType.name} ${widget.isRenewal ? 'membership renewal' : 'membership application'}',
         );
 
         if (!mounted) return;
         setState(() {
-          _successMessage =
-              'Your application was started. Complete Stripe Checkout to finish payment.';
+          _successMessage = widget.isRenewal
+              ? 'Your renewal request was started. Complete Stripe Checkout to finish payment.'
+              : 'Your application was started. Complete Stripe Checkout to finish payment.';
         });
       } else if (checkoutAmountCents > 0) {
         if (!mounted) return;
         setState(() {
-          _successMessage =
-              'Your application was submitted. Payment will be handled by the club.';
+          _successMessage = widget.isRenewal
+              ? 'Your renewal request was submitted. Payment will be handled by the club.'
+              : 'Your application was submitted. Payment will be handled by the club.';
         });
       } else {
         if (!mounted) return;
         setState(() {
-          _successMessage = 'Your membership application was submitted.';
+          _successMessage = widget.isRenewal
+              ? 'Your renewal request was submitted for club review.'
+              : 'Your membership application was submitted.';
         });
       }
     } catch (error) {
@@ -990,7 +1129,11 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Apply for Membership')),
+      appBar: AppBar(
+        title: Text(
+          widget.isRenewal ? 'Renew Membership' : 'Apply for Membership',
+        ),
+      ),
       body: _buildBody(context),
     );
   }
@@ -1035,7 +1178,9 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Choose a membership type and submit your information. Applications may require club approval.',
+              widget.isRenewal
+                  ? 'Review your current information, choose a membership type, and submit your renewal request for club approval.'
+                  : 'Choose a membership type and submit your information. Applications may require club approval.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 20),
@@ -1321,7 +1466,7 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                 isError: false,
               ),
             ],
-            if (_selectedType?.allowAutoRenew == true) ...[
+            if (_selectedType?.allowAutoRenew == true && !widget.isRenewal) ...[
               const SizedBox(height: 12),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
@@ -1465,17 +1610,25 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
 
   String get _submitButtonLabel {
     final selectedType = _selectedType;
-    if (selectedType == null) return 'Submit Application';
+    if (selectedType == null) {
+      return widget.isRenewal ? 'Submit Renewal Request' : 'Submit Application';
+    }
 
     if (_checkoutAmountCents > 0 && _isCheckPaymentSelected) {
-      return 'Submit and Mail Check ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
+      final action = widget.isRenewal
+          ? 'Request Renewal and Mail Check'
+          : 'Submit and Mail Check';
+      return '$action ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
     }
 
     if (_checkoutAmountCents > 0 && _acceptsOnlinePayments) {
-      return 'Submit and Pay ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
+      final action = widget.isRenewal
+          ? 'Request Renewal and Pay'
+          : 'Submit and Pay';
+      return '$action ${_moneyLabel(_checkoutAmountCents, selectedType.currency)}';
     }
 
-    return 'Submit Application';
+    return widget.isRenewal ? 'Submit Renewal Request' : 'Submit Application';
   }
 
   static String? _requiredValidator(String? value) {

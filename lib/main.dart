@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'config/app_versions.dart';
 import 'config/supabase_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -42,12 +43,47 @@ class RingMasterClubApp extends StatelessWidget {
           decoration: const BoxDecoration(
             gradient: AppColors.clubBackgroundGradient,
           ),
-          child: child ?? const SizedBox.shrink(),
+          child: Stack(
+            children: [
+              child ?? const SizedBox.shrink(),
+              const _VersionBanner(),
+            ],
+          ),
         );
       },
       home: const Root(),
     );
   }
+}
+
+class _VersionBanner extends StatelessWidget {
+  const _VersionBanner();
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          width: double.infinity,
+          color: const Color(0xFFE7ECE9),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Text(
+              'Version $kRingMasterClubAppVersion',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF66706B),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class Root extends StatefulWidget {
