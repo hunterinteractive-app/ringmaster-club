@@ -394,7 +394,10 @@ class _ClubStaffPermissionsScreenState
           ),
           const SizedBox(height: 12),
           _CurrentAccessCard(
-            roleName: _currentUserRole?.name ?? 'No active staff role',
+            roleName:
+                _currentUserStaffAssignment?.titleOverride ??
+                _currentUserRole?.name ??
+                'No active staff role',
             canManageStaff: _canManageStaff,
             canManageBilling: _isCurrentUserOwner,
           ),
@@ -489,7 +492,7 @@ class _ClubStaffPermissionsScreenState
               onRemove: _removeStaff,
             ),
           const SizedBox(height: 20),
-          const _SectionTitle('Roles & Permissions'),
+          const _SectionTitle('Access Templates & Permissions'),
           if (dashboard.roles.isEmpty)
             const _InlineEmptyState(
               title: 'No roles configured',
@@ -548,9 +551,7 @@ class _StaffTable extends StatelessWidget {
                   DataCell(Text(item.email ?? '—')),
                   DataCell(
                     Text(
-                      item.titleOverride == null
-                          ? item.roleName ?? '—'
-                          : '${item.titleOverride}\n${item.roleName ?? '—'}',
+                      item.titleOverride ?? item.roleName ?? '—',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -744,7 +745,7 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
                 DropdownButtonFormField<String>(
                   initialValue: _roleId,
                   decoration: const InputDecoration(
-                    labelText: 'Role',
+                    labelText: 'Access template',
                     border: OutlineInputBorder(),
                   ),
                   items: [
@@ -939,7 +940,7 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
               DropdownButtonFormField<String>(
                 initialValue: _roleId,
                 decoration: const InputDecoration(
-                  labelText: 'Role to activate',
+                  labelText: 'Access template',
                   border: OutlineInputBorder(),
                 ),
                 items: [
