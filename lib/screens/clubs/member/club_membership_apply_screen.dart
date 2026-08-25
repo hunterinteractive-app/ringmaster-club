@@ -62,6 +62,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
   List<Map<String, dynamic>> _linkedExhibitors = const [];
   Map<String, dynamic>? _selectedLinkedExhibitor;
   final Set<String> _selectedAdditionalExhibitorIds = <String>{};
+  final List<_ManualFamilyMember> _manualFamilyMembers =
+      <_ManualFamilyMember>[];
   bool _autoRenewEnabled = false;
   bool _showingNameTouched = false;
   bool _isWiringShowingName = false;
@@ -96,6 +98,9 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
     _recommendationController.dispose();
     _countryController.dispose();
     _notesController.dispose();
+    for (final person in _manualFamilyMembers) {
+      person.dispose();
+    }
     super.dispose();
   }
 
@@ -487,11 +492,24 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
         .toList();
   }
 
+  bool get _isFamilyMembership => _selectedType?.membershipScope == 'family';
+
+  void _addManualFamilyMember() {
+    setState(() => _manualFamilyMembers.add(_ManualFamilyMember()));
+  }
+
+  void _removeManualFamilyMember(_ManualFamilyMember person) {
+    setState(() {
+      _manualFamilyMembers.remove(person);
+      person.dispose();
+    });
+  }
+
   String _additionalLinkedPeopleSummary() {
     final selected = _additionalLinkedExhibitors;
     if (selected.isEmpty) return '';
 
-    return selected
+    final savedPeople = selected
         .map((exhibitor) {
           final name = _bestShowingNameForExhibitor(exhibitor);
           final type = _accountTypeFor(exhibitor);
@@ -503,6 +521,15 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
           return parts.isEmpty ? 'Linked account' : parts.join(' • ');
         })
         .join('\n');
+    final manualPeople = _manualFamilyMembers
+        .map((person) => person.summary)
+        .where((summary) => summary.isNotEmpty)
+        .join('\n');
+
+    return [
+      savedPeople,
+      manualPeople,
+    ].where((summary) => summary.isNotEmpty).join('\n');
   }
 
   String? _combinedNotesForSubmission() {
@@ -587,6 +614,14 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       'linked_people': {
         'primary_exhibitor_id': _selectedLinkedExhibitor?['id']?.toString(),
         'additional_exhibitor_ids': _selectedAdditionalExhibitorIds.toList(),
+        'additional_manual_people': _manualFamilyMembers
+            .map((person) => person.toJson())
+            .where(
+              (person) =>
+                  person['first_name']!.isNotEmpty ||
+                  person['last_name']!.isNotEmpty,
+            )
+            .toList(),
         'additional_people_summary': _additionalLinkedPeopleSummary(),
       },
     };
@@ -1086,7 +1121,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
       ..._additionalLinkedExhibitors,
     ];
 
-    return people.where(_isYouthExhibitor).length;
+    return people.where(_isYouthExhibitor).length +
+        _manualFamilyMembers.where((person) => person.kind == 'youth').length;
   }
 
   bool _isYouthExhibitor(Map<String, dynamic> exhibitor) {
@@ -1255,7 +1291,8 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                 },
               ),
               const SizedBox(height: 12),
-              if (_availableAdditionalLinkedExhibitors.isNotEmpty) ...[
+              if (_isFamilyMembership &&
+                  _availableAdditionalLinkedExhibitors.isNotEmpty) ...[
                 Card(
                   clipBehavior: Clip.antiAlias,
                   child: ExpansionTile(
@@ -1287,8 +1324,54 @@ class _ClubMembershipApplyScreenState extends State<ClubMembershipApplyScreen> {
                     }).toList(),
                   ),
                 ),
-                const SizedBox(height: 36),
+                const SizedBox(height: 12),
               ],
+            ],
+            if (_isFamilyMembership) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.family_restroom_outlined),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Family members',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Select saved people above, or add household members here. '
+                        'Your Family membership includes ${_selectedType?.familyIncludedAdults ?? 2} adult(s) and ${_selectedType?.familyIncludedYouth ?? 0} youth.',
+                      ),
+                      for (final person in _manualFamilyMembers) ...[
+                        const SizedBox(height: 14),
+                        _ManualFamilyMemberCard(
+                          person: person,
+                          onRemove: () => _removeManualFamilyMember(person),
+                          onChanged: () => setState(() {}),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      OutlinedButton.icon(
+                        onPressed: _addManualFamilyMember,
+                        icon: const Icon(Icons.person_add_alt_1_outlined),
+                        label: const Text('Add household member'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
             ],
             const SizedBox(height: 8),
             Row(
@@ -1980,6 +2063,101 @@ class _MembershipPaymentMethodOption extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ManualFamilyMember {
+  final firstNameController = TextEditingController();
+  final lastNameController = TextEditingController();
+  String kind = 'adult';
+
+  Map<String, String> toJson() => {
+    'first_name': firstNameController.text.trim(),
+    'last_name': lastNameController.text.trim(),
+    'membership_kind': kind,
+  };
+
+  String get summary {
+    final name = [
+      firstNameController.text.trim(),
+      lastNameController.text.trim(),
+    ].where((part) => part.isNotEmpty).join(' ');
+    if (name.isEmpty) return '';
+    return '$name • ${kind == 'youth' ? 'Youth' : 'Adult'}';
+  }
+
+  void dispose() {
+    firstNameController.dispose();
+    lastNameController.dispose();
+  }
+}
+
+class _ManualFamilyMemberCard extends StatelessWidget {
+  const _ManualFamilyMemberCard({
+    required this.person,
+    required this.onRemove,
+    required this.onChanged,
+  });
+
+  final _ManualFamilyMember person;
+  final VoidCallback onRemove;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Expanded(child: Text('Household member')),
+              IconButton(
+                tooltip: 'Remove household member',
+                onPressed: onRemove,
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: person.firstNameController,
+                  decoration: const InputDecoration(labelText: 'First name'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: person.lastNameController,
+                  decoration: const InputDecoration(labelText: 'Last name'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: person.kind,
+            decoration: const InputDecoration(labelText: 'Membership type'),
+            items: const [
+              DropdownMenuItem(value: 'adult', child: Text('Adult')),
+              DropdownMenuItem(value: 'youth', child: Text('Youth')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              person.kind = value;
+              onChanged();
+            },
+          ),
+        ],
       ),
     );
   }
