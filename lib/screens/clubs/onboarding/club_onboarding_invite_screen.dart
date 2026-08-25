@@ -158,11 +158,26 @@ class _ClubOnboardingInviteScreenState
   void _ensureStandardOfficers() {
     const titles = ['President', 'Vice President', 'Secretary', 'Newsletter'];
     for (final title in titles) {
-      if (!_officers.any((officer) => officer.title.text == title)) {
-        _officers.add(_OfficerDraft(title: title));
+      final matching = _officers
+          .where((officer) => officer.title.text == title)
+          .toList();
+      if (matching.isEmpty) {
+        _officers.add(
+          _OfficerDraft(title: title, access: _defaultAccessForTitle(title)),
+        );
+      } else if (matching.first.name.text.trim().isEmpty &&
+          matching.first.email.text.trim().isEmpty) {
+        matching.first.access = _defaultAccessForTitle(title);
       }
     }
   }
+
+  String _defaultAccessForTitle(String title) => switch (title) {
+    'President' || 'Secretary' => 'club_admin',
+    'Vice President' || 'Newsletter' => 'membership_read_newsletter',
+    'Director' => 'read_only',
+    _ => 'read_only',
+  };
 
   List<_OfficerDraft> get _enteredOfficers => _officers
       .where(
@@ -175,8 +190,14 @@ class _ClubOnboardingInviteScreenState
   _OfficerDraft _officerFor(String title) =>
       _officers.firstWhere((officer) => officer.title.text == title);
 
-  void _addDirector() =>
-      setState(() => _officers.add(_OfficerDraft(title: 'Director')));
+  void _addDirector() => setState(
+    () => _officers.add(
+      _OfficerDraft(
+        title: 'Director',
+        access: _defaultAccessForTitle('Director'),
+      ),
+    ),
+  );
 
   Map<String, dynamic> get _answers => {
     'club': {
@@ -475,7 +496,7 @@ class _ClubOnboardingInviteScreenState
   Widget _officersStep() => _StepContent(
     title: 'Add your officers',
     description:
-        'Enter each office separately. Titles are what members see; access templates can be customized later for each person.',
+        'Enter each office separately. RingMaster assigns the appropriate starting access for each office; it can be adjusted later in Staff & Permissions.',
     children: [
       TextField(
         controller: _treasurerName,
@@ -853,43 +874,9 @@ class _OfficerCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: InputDecorator(
-                  decoration: const InputDecoration(labelText: 'Office title'),
-                  child: Text(officer.title.text),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: officer.access,
-                  decoration: const InputDecoration(
-                    labelText: 'Access template',
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'club_admin',
-                      child: Text('Club Administrator'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'treasurer',
-                      child: Text('Treasurer'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'sanctions_sweepstakes_secretary',
-                      child: Text('Sanction & Sweepstakes Secretary'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      officer.access = value;
-                    }
-                  },
-                ),
-              ),
-            ],
+          InputDecorator(
+            decoration: const InputDecoration(labelText: 'Office title'),
+            child: Text(officer.title.text),
           ),
         ],
       ),
