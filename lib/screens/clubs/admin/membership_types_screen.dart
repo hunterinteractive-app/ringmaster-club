@@ -1350,8 +1350,10 @@ class _MembershipTypeDialogState extends State<_MembershipTypeDialog> {
     return null;
   }
 
-  Map<String, dynamic>? _buildSettingsPayload() {
-    if (_membershipScope != 'family') return null;
+  Map<String, dynamic> _buildSettingsPayload() {
+    // `club_membership_types.settings` is non-nullable. Non-family types do
+    // not need settings, but must still persist an empty JSON object.
+    if (_membershipScope != 'family') return {};
 
     return {
       'included_adults': _nullableInt(_includedAdultsController.text) ?? 2,
