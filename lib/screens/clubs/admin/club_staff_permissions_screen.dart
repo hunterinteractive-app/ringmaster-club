@@ -171,6 +171,24 @@ class _ClubStaffPermissionsScreenState
     if (changed == true) await _loadDashboard();
   }
 
+  Future<void> _openPermissionEditor(_ClubStaffAssignment staff) async {
+    final dashboard = _dashboard;
+    if (dashboard == null || !_canModifyStaffAssignment(staff)) {
+      _showPermissionSnackBar('You do not have permission to change this staff access.');
+      return;
+    }
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _StaffAccessDialog(
+        clubId: widget.club.clubId,
+        staff: staff,
+        permissions: dashboard.permissions,
+        selectedPermissionIds: dashboard.permissionIdsForStaff(staff),
+      ),
+    );
+    if (changed == true) await _loadDashboard();
+  }
+
   Future<void> _openInvitationDialog() async {
     final dashboard = _dashboard;
     if (dashboard == null || !_canManageStaff) {
@@ -466,6 +484,7 @@ class _ClubStaffPermissionsScreenState
               staff: filteredStaff,
               canModify: _canModifyStaffAssignment,
               onEdit: (staff) => _openStaffEditor(existing: staff),
+              onEditAccess: _openPermissionEditor,
               onToggleStatus: _toggleStatus,
               onRemove: _removeStaff,
             ),
@@ -494,6 +513,7 @@ class _StaffTable extends StatelessWidget {
     required this.staff,
     required this.canModify,
     required this.onEdit,
+    required this.onEditAccess,
     required this.onToggleStatus,
     required this.onRemove,
   });
@@ -501,6 +521,7 @@ class _StaffTable extends StatelessWidget {
   final List<_ClubStaffAssignment> staff;
   final bool Function(_ClubStaffAssignment staff) canModify;
   final ValueChanged<_ClubStaffAssignment> onEdit;
+  final ValueChanged<_ClubStaffAssignment> onEditAccess;
   final ValueChanged<_ClubStaffAssignment> onToggleStatus;
   final ValueChanged<_ClubStaffAssignment> onRemove;
 
@@ -527,7 +548,9 @@ class _StaffTable extends StatelessWidget {
                   DataCell(Text(item.email ?? '—')),
                   DataCell(
                     Text(
-                      item.roleName ?? '—',
+                      item.titleOverride == null
+                          ? item.roleName ?? '—'
+                          : '${item.titleOverride}\n${item.roleName ?? '—'}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -542,6 +565,7 @@ class _StaffTable extends StatelessWidget {
                         ? PopupMenuButton<String>(
                             onSelected: (value) {
                               if (value == 'edit') onEdit(item);
+                              if (value == 'access') onEditAccess(item);
                               if (value == 'status') onToggleStatus(item);
                               if (value == 'remove') onRemove(item);
                             },
@@ -549,6 +573,10 @@ class _StaffTable extends StatelessWidget {
                               const PopupMenuItem(
                                 value: 'edit',
                                 child: Text('Edit Role'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'access',
+                                child: Text('Customize Access'),
                               ),
                               PopupMenuItem(
                                 value: 'status',
@@ -595,6 +623,7 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
   final _supabase = Supabase.instance.client;
 
   late final TextEditingController _emailController;
+  late final TextEditingController _titleController;
   late String? _roleId;
   late String _status;
   bool _isSaving = false;
@@ -605,6 +634,9 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
     super.initState();
     final existing = widget.existing;
     _emailController = TextEditingController(text: existing?.email ?? '');
+    _titleController = TextEditingController(
+      text: existing?.titleOverride ?? '',
+    );
     final existingRoleIsAvailable = existing == null
         ? false
         : widget.roles.any((role) => role.id == existing.roleId);
@@ -617,6 +649,7 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
   @override
   void dispose() {
     _emailController.dispose();
+    _titleController.dispose();
     super.dispose();
   }
 
@@ -643,6 +676,7 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
           'p_email': _emailController.text.trim(),
           'p_role_id': _roleId,
           'p_status': _status,
+          'p_title_override': _titleController.text.trim(),
         },
       );
 
@@ -694,6 +728,17 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
                     border: OutlineInputBorder(),
                   ),
                   validator: _emailRequired,
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _titleController,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Club office title (optional)',
+                    helperText:
+                        'Examples: President, Secretary, Vice President, Director.',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
@@ -777,7 +822,9 @@ class _StaffInvitationDialog extends StatefulWidget {
 class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
   final _formKey = GlobalKey<FormState>();
   final _supabase = Supabase.instance.client;
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _titleController = TextEditingController();
   late String? _roleId;
   bool _isSaving = false;
   String? _errorMessage;
@@ -790,7 +837,9 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
 
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
+    _titleController.dispose();
     super.dispose();
   }
 
@@ -811,8 +860,10 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
         'create_club_staff_invitation',
         params: {
           'p_club_id': widget.clubId,
+          'p_display_name': _nameController.text.trim(),
           'p_email': _emailController.text.trim(),
           'p_role_id': roleId,
+          'p_title_override': _titleController.text.trim(),
         },
       );
       if (mounted) Navigator.of(context).pop(true);
@@ -850,7 +901,19 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
                 const SizedBox(height: 14),
               ],
               const Text(
-                'Assign a role now. It activates automatically when this email creates a RingMaster Club account.',
+                'Assign access and an office title now. It activates automatically when this email creates a RingMaster Club account.',
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Staff name',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) => (value?.trim().isEmpty ?? true)
+                    ? 'Required.'
+                    : null,
               ),
               const SizedBox(height: 14),
               TextFormField(
@@ -861,6 +924,16 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
                   border: OutlineInputBorder(),
                 ),
                 validator: _emailRequired,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _titleController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Club office title (optional)',
+                  helperText: 'Examples: President, Secretary, Vice President, Director.',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
@@ -906,6 +979,131 @@ class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
     if (text.isEmpty) return 'Required.';
     if (!text.contains('@')) return 'Enter a valid email.';
     return null;
+  }
+}
+
+class _StaffAccessDialog extends StatefulWidget {
+  const _StaffAccessDialog({
+    required this.clubId,
+    required this.staff,
+    required this.permissions,
+    required this.selectedPermissionIds,
+  });
+
+  final String clubId;
+  final _ClubStaffAssignment staff;
+  final List<_ClubPermission> permissions;
+  final Set<String> selectedPermissionIds;
+
+  @override
+  State<_StaffAccessDialog> createState() => _StaffAccessDialogState();
+}
+
+class _StaffAccessDialogState extends State<_StaffAccessDialog> {
+  final _supabase = Supabase.instance.client;
+  late final Set<String> _selectedPermissionIds = {
+    ...widget.selectedPermissionIds,
+  };
+  bool _isSaving = false;
+  String? _errorMessage;
+
+  Future<void> _save() async {
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+    try {
+      await _supabase.rpc(
+        'set_club_staff_permission_overrides',
+        params: {
+          'p_club_id': widget.clubId,
+          'p_assignment_id': widget.staff.id,
+          'p_permission_ids': _selectedPermissionIds.toList(),
+        },
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _errorMessage = 'Unable to update access: $error';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final staffName = widget.staff.displayName;
+    return AlertDialog(
+      title: Text('Customize Access — $staffName'),
+      content: SizedBox(
+        width: 680,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Choose the capabilities this person may use. This overrides their standard role only for this club.',
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Material(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(_errorMessage!),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final permission in widget.permissions)
+                    CheckboxListTile(
+                      value: _selectedPermissionIds.contains(permission.id),
+                      onChanged: _isSaving
+                          ? null
+                          : (selected) => setState(() {
+                              if (selected == true) {
+                                _selectedPermissionIds.add(permission.id);
+                              } else {
+                                _selectedPermissionIds.remove(permission.id);
+                              }
+                            }),
+                      title: Text(permission.label),
+                      subtitle: permission.description == null
+                          ? null
+                          : Text(permission.description!),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _isSaving ? null : _save,
+          icon: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save_outlined),
+          label: Text(_isSaving ? 'Saving...' : 'Save Access'),
+        ),
+      ],
+    );
   }
 }
 
@@ -1225,12 +1423,14 @@ class _StaffPermissionsDashboard {
     required this.roles,
     required this.permissions,
     required this.rolePermissions,
+    required this.permissionOverrides,
   });
 
   final List<_ClubStaffAssignment> staff;
   final List<_ClubRole> roles;
   final List<_ClubPermission> permissions;
   final List<_ClubRolePermission> rolePermissions;
+  final List<_ClubStaffPermissionOverride> permissionOverrides;
 
   List<_ClubPermission> permissionsForRole(String roleId) {
     final permissionIds = rolePermissions
@@ -1251,6 +1451,20 @@ class _StaffPermissionsDashboard {
     return null;
   }
 
+  Set<String> permissionIdsForStaff(_ClubStaffAssignment staff) {
+    final ids = permissionsForRole(staff.roleId).map((item) => item.id).toSet();
+    for (final override in permissionOverrides.where(
+      (item) => item.staffAssignmentId == staff.id,
+    )) {
+      if (override.accessGranted) {
+        ids.add(override.permissionId);
+      } else {
+        ids.remove(override.permissionId);
+      }
+    }
+    return ids;
+  }
+
   factory _StaffPermissionsDashboard.fromJson(Map<String, dynamic> json) {
     return _StaffPermissionsDashboard(
       staff: _list(json['staff']).map(_ClubStaffAssignment.fromJson).toList(),
@@ -1261,6 +1475,9 @@ class _StaffPermissionsDashboard {
       rolePermissions: _list(
         json['role_permissions'],
       ).map(_ClubRolePermission.fromJson).toList(),
+      permissionOverrides: _list(
+        json['permission_overrides'],
+      ).map(_ClubStaffPermissionOverride.fromJson).toList(),
     );
   }
 }
@@ -1276,6 +1493,7 @@ class _ClubStaffAssignment {
     this.userId,
     this.email,
     this.roleName,
+    this.titleOverride,
   });
 
   final String id;
@@ -1283,6 +1501,7 @@ class _ClubStaffAssignment {
   final String roleId;
   final String? email;
   final String? roleName;
+  final String? titleOverride;
   final String status;
   final String displayName;
   final DateTime createdAt;
@@ -1295,6 +1514,7 @@ class _ClubStaffAssignment {
       roleId: _stringValue(json['role_id'], fallback: ''),
       email: _nullableString(json['email']),
       roleName: _nullableString(json['role_name']),
+      titleOverride: _nullableString(json['title_override']),
       status: _stringValue(json['status'], fallback: 'active'),
       displayName: _stringValue(
         json['display_name'],
@@ -1371,6 +1591,29 @@ class _ClubRolePermission {
     return _ClubRolePermission(
       roleId: _stringValue(json['role_id'], fallback: ''),
       permissionId: _stringValue(json['permission_id'], fallback: ''),
+    );
+  }
+}
+
+class _ClubStaffPermissionOverride {
+  const _ClubStaffPermissionOverride({
+    required this.staffAssignmentId,
+    required this.permissionId,
+    required this.accessGranted,
+  });
+
+  final String staffAssignmentId;
+  final String permissionId;
+  final bool accessGranted;
+
+  factory _ClubStaffPermissionOverride.fromJson(Map<String, dynamic> json) {
+    return _ClubStaffPermissionOverride(
+      staffAssignmentId: _stringValue(
+        json['staff_assignment_id'],
+        fallback: '',
+      ),
+      permissionId: _stringValue(json['permission_id'], fallback: ''),
+      accessGranted: json['access_granted'] == true,
     );
   }
 }
