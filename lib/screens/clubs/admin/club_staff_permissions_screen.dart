@@ -193,11 +193,20 @@ class _ClubStaffPermissionsScreenState
       ),
     );
     if (!mounted || invited != true) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Staff invitation saved. The role activates when they create an account with that email.',
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.mark_email_read_outlined),
+        title: const Text('Invitation Saved'),
+        content: const Text(
+          'The staff invitation is ready. Their assigned role will activate automatically when they create and sign in to a RingMaster Club account using that email address.',
         ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Done'),
+          ),
+        ],
       ),
     );
   }
