@@ -100,11 +100,23 @@ class _RootState extends State<Root> {
   void initState() {
     super.initState();
 
+    _claimPendingStaffInvitations();
     _authSubscription = supabase.auth.onAuthStateChange.listen((_) {
+      _claimPendingStaffInvitations();
       if (mounted) {
         setState(() {});
       }
     });
+  }
+
+  Future<void> _claimPendingStaffInvitations() async {
+    if (supabase.auth.currentSession == null) return;
+    try {
+      await supabase.rpc('claim_pending_club_staff_invitations');
+    } catch (_) {
+      // An invitation must never prevent a user from signing in. The next
+      // authenticated session retries the claim if a migration is pending.
+    }
   }
 
   @override

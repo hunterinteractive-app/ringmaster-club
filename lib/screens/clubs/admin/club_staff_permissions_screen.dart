@@ -1,5 +1,3 @@
-
-
 // lib/screens/clubs/admin/club_staff_permissions_screen.dart
 
 import 'package:flutter/material.dart';
@@ -8,10 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/clubs/club_summary.dart';
 
 class ClubStaffPermissionsScreen extends StatefulWidget {
-  const ClubStaffPermissionsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubStaffPermissionsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -155,14 +150,10 @@ class _ClubStaffPermissionsScreenState
 
     final editableRoles = _isCurrentUserOwner
         ? dashboard.roles
-        : dashboard.roles
-            .where((role) => !_isOwnerRole(role.code))
-            .toList();
+        : dashboard.roles.where((role) => !_isOwnerRole(role.code)).toList();
 
     if (editableRoles.isEmpty) {
-      _showPermissionSnackBar(
-        'There are no roles you are allowed to assign.',
-      );
+      _showPermissionSnackBar('There are no roles you are allowed to assign.');
       return;
     }
 
@@ -179,13 +170,45 @@ class _ClubStaffPermissionsScreenState
     if (changed == true) await _loadDashboard();
   }
 
+  Future<void> _openInvitationDialog() async {
+    final dashboard = _dashboard;
+    if (dashboard == null || !_canManageStaff) {
+      _showPermissionSnackBar();
+      return;
+    }
+
+    final editableRoles = _isCurrentUserOwner
+        ? dashboard.roles
+        : dashboard.roles.where((role) => !_isOwnerRole(role.code)).toList();
+    if (editableRoles.isEmpty) {
+      _showPermissionSnackBar('There are no roles you are allowed to assign.');
+      return;
+    }
+
+    final invited = await showDialog<bool>(
+      context: context,
+      builder: (_) => _StaffInvitationDialog(
+        clubId: widget.club.clubId,
+        roles: editableRoles,
+      ),
+    );
+    if (!mounted || invited != true) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Staff invitation saved. The role activates when they create an account with that email.',
+        ),
+      ),
+    );
+  }
+
   void _showPermissionSnackBar([
     String message = 'You do not have permission to manage staff assignments.',
   ]) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _removeStaff(_ClubStaffAssignment staff) async {
@@ -222,10 +245,7 @@ class _ClubStaffPermissionsScreenState
     try {
       await _supabase.rpc(
         'remove_club_staff_assignment',
-        params: {
-          'p_assignment_id': staff.id,
-          'p_club_id': widget.club.clubId,
-        },
+        params: {'p_assignment_id': staff.id, 'p_club_id': widget.club.clubId},
       );
       await _loadDashboard();
     } catch (error) {
@@ -277,14 +297,32 @@ class _ClubStaffPermissionsScreenState
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _dashboard == null
-            ? null
-            : _canManageStaff
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'invite_staff',
+            onPressed: _dashboard == null
+                ? null
+                : _canManageStaff
+                ? _openInvitationDialog
+                : _showPermissionSnackBar,
+            icon: const Icon(Icons.mark_email_unread_outlined),
+            label: const Text('Invite Staff'),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'add_staff',
+            onPressed: _dashboard == null
+                ? null
+                : _canManageStaff
                 ? () => _openStaffEditor()
                 : _showPermissionSnackBar,
-        icon: const Icon(Icons.person_add_alt_1_outlined),
-        label: const Text('Add Staff'),
+            icon: const Icon(Icons.person_add_alt_1_outlined),
+            label: const Text('Add Existing Staff'),
+          ),
+        ],
       ),
       body: _buildBody(),
     );
@@ -326,9 +364,9 @@ class _ClubStaffPermissionsScreenState
         children: [
           Text(
             widget.club.clubName,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -407,8 +445,9 @@ class _ClubStaffPermissionsScreenState
               message: dashboard.staff.isEmpty
                   ? 'Add officers, secretaries, treasurers, or other club staff to manage club operations.'
                   : 'Try another name, email, role, or status.',
-              actionLabel:
-                  dashboard.staff.isEmpty && _canManageStaff ? 'Add Staff' : null,
+              actionLabel: dashboard.staff.isEmpty && _canManageStaff
+                  ? 'Add Staff'
+                  : null,
               onAction: dashboard.staff.isEmpty && _canManageStaff
                   ? () => _openStaffEditor()
                   : null,
@@ -481,8 +520,8 @@ class _StaffTable extends StatelessWidget {
                     Text(
                       item.roleName ?? '—',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   DataCell(_StatusChip(status: item.status)),
@@ -654,10 +693,7 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
                   ),
                   items: [
                     for (final role in widget.roles)
-                      DropdownMenuItem(
-                        value: role.id,
-                        child: Text(role.name),
-                      ),
+                      DropdownMenuItem(value: role.id, child: Text(role.name)),
                   ],
                   onChanged: _isSaving
                       ? null
@@ -673,7 +709,10 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
                   ),
                   items: const [
                     DropdownMenuItem(value: 'active', child: Text('Active')),
-                    DropdownMenuItem(value: 'inactive', child: Text('Inactive')),
+                    DropdownMenuItem(
+                      value: 'inactive',
+                      child: Text('Inactive'),
+                    ),
                   ],
                   onChanged: _isSaving
                       ? null
@@ -714,11 +753,153 @@ class _StaffEditorDialogState extends State<_StaffEditorDialog> {
   }
 }
 
+class _StaffInvitationDialog extends StatefulWidget {
+  const _StaffInvitationDialog({required this.clubId, required this.roles});
+
+  final String clubId;
+  final List<_ClubRole> roles;
+
+  @override
+  State<_StaffInvitationDialog> createState() => _StaffInvitationDialogState();
+}
+
+class _StaffInvitationDialogState extends State<_StaffInvitationDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _supabase = Supabase.instance.client;
+  final _emailController = TextEditingController();
+  late String? _roleId;
+  bool _isSaving = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _roleId = widget.roles.isEmpty ? null : widget.roles.first.id;
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_isSaving || !(_formKey.currentState?.validate() ?? false)) return;
+    final roleId = _roleId;
+    if (roleId == null) {
+      setState(() => _errorMessage = 'Select a role.');
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+    try {
+      await _supabase.rpc(
+        'create_club_staff_invitation',
+        params: {
+          'p_club_id': widget.clubId,
+          'p_email': _emailController.text.trim(),
+          'p_role_id': roleId,
+        },
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _errorMessage = 'Unable to save staff invitation: $error';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Invite Staff'),
+      content: SizedBox(
+        width: 620,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_errorMessage != null) ...[
+                Material(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(_errorMessage!),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              const Text(
+                'Assign a role now. It activates automatically when this email creates a RingMaster Club account.',
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Invitee email',
+                  border: OutlineInputBorder(),
+                ),
+                validator: _emailRequired,
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: _roleId,
+                decoration: const InputDecoration(
+                  labelText: 'Role to activate',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final role in widget.roles)
+                    DropdownMenuItem(value: role.id, child: Text(role.name)),
+                ],
+                onChanged: _isSaving
+                    ? null
+                    : (value) => setState(() => _roleId = value),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _isSaving ? null : _save,
+          icon: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.mark_email_unread_outlined),
+          label: Text(_isSaving ? 'Saving...' : 'Save Invitation'),
+        ),
+      ],
+    );
+  }
+
+  String? _emailRequired(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return 'Required.';
+    if (!text.contains('@')) return 'Enter a valid email.';
+    return null;
+  }
+}
+
 class _RolePermissionsCard extends StatelessWidget {
-  const _RolePermissionsCard({
-    required this.role,
-    required this.permissions,
-  });
+  const _RolePermissionsCard({required this.role, required this.permissions});
 
   final _ClubRole role;
   final List<_ClubPermission> permissions;
@@ -803,15 +984,15 @@ class _CurrentAccessCard extends StatelessWidget {
                   Text(
                     'Your access: $roleName',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     canManageStaff
                         ? canManageBilling
-                            ? 'You can manage staff, permissions, billing, and add-ons for this club.'
-                            : 'You can manage staff and permissions for this club. Billing and add-ons remain owner-only.'
+                              ? 'You can manage staff, permissions, billing, and add-ons for this club.'
+                              : 'You can manage staff and permissions for this club. Billing and add-ons remain owner-only.'
                         : 'You can view staff and permissions, but you cannot change assignments.',
                   ),
                 ],
@@ -871,8 +1052,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -896,10 +1077,10 @@ class _ResponsiveCards extends StatelessWidget {
         final width = constraints.maxWidth >= 1100
             ? (constraints.maxWidth - 36) / 4
             : constraints.maxWidth >= 760
-                ? (constraints.maxWidth - 24) / 3
-                : constraints.maxWidth >= 520
-                    ? (constraints.maxWidth - 12) / 2
-                    : constraints.maxWidth;
+            ? (constraints.maxWidth - 24) / 3
+            : constraints.maxWidth >= 520
+            ? (constraints.maxWidth - 12) / 2
+            : constraints.maxWidth;
 
         return Wrap(
           spacing: 12,
@@ -924,9 +1105,9 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
       ),
     );
   }
@@ -962,8 +1143,8 @@ class _MessageState extends StatelessWidget {
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 10),
               Text(message, textAlign: TextAlign.center),
@@ -1005,9 +1186,9 @@ class _InlineEmptyState extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -1063,11 +1244,12 @@ class _StaffPermissionsDashboard {
     return _StaffPermissionsDashboard(
       staff: _list(json['staff']).map(_ClubStaffAssignment.fromJson).toList(),
       roles: _list(json['roles']).map(_ClubRole.fromJson).toList(),
-      permissions:
-          _list(json['permissions']).map(_ClubPermission.fromJson).toList(),
-      rolePermissions: _list(json['role_permissions'])
-          .map(_ClubRolePermission.fromJson)
-          .toList(),
+      permissions: _list(
+        json['permissions'],
+      ).map(_ClubPermission.fromJson).toList(),
+      rolePermissions: _list(
+        json['role_permissions'],
+      ).map(_ClubRolePermission.fromJson).toList(),
     );
   }
 }
@@ -1166,10 +1348,7 @@ class _ClubPermission {
 }
 
 class _ClubRolePermission {
-  const _ClubRolePermission({
-    required this.roleId,
-    required this.permissionId,
-  });
+  const _ClubRolePermission({required this.roleId, required this.permissionId});
 
   final String roleId;
   final String permissionId;
