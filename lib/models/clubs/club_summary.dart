@@ -39,7 +39,7 @@ class ClubSummary {
 
   bool get hasMembership => membershipId != null;
 
-  bool get canRequestSanction => sanctionRequestsEnabled ?? true;
+  bool get canRequestSanction => sanctionRequestsEnabled == true;
 
   String get displayName {
     final shortName = clubShortName?.trim();

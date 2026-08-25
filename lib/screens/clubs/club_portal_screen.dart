@@ -487,15 +487,17 @@ class _ClubActionPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _PortalChoiceCard(
-          icon: Icons.badge_outlined,
-          title: 'Member Portal',
-          description:
-              'View your membership details, digital cards, club documents, announcements, and any member tools enabled by this club.',
-          buttonLabel: 'Open Member Portal',
-          onPressed: onOpenMemberPortal,
-        ),
-        const SizedBox(height: 12),
+        if (club.hasMembership) ...[
+          _PortalChoiceCard(
+            icon: Icons.badge_outlined,
+            title: 'Member Portal',
+            description:
+                'View your membership details, digital cards, club documents, announcements, and any member tools enabled by this club.',
+            buttonLabel: 'Open Member Portal',
+            onPressed: onOpenMemberPortal,
+          ),
+          const SizedBox(height: 12),
+        ],
         _PortalChoiceCard(
           icon: Icons.assignment_ind_outlined,
           title: 'Join / Renew Membership',
