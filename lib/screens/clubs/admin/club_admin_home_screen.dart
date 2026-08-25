@@ -7,7 +7,6 @@ import 'club_communications_screen.dart';
 import 'club_documents_screen.dart';
 import 'club_events_screen.dart';
 import 'club_members_screen.dart';
-import 'club_onboarding_screen.dart';
 import 'club_payments_screen.dart';
 import 'club_reports_screen.dart';
 import 'club_staff_permissions_screen.dart';
@@ -145,19 +144,6 @@ class _ClubAdminHomeScreenState extends State<ClubAdminHomeScreen> {
           children: [
             _AdminHeaderCard(club: club),
             const SizedBox(height: 16),
-            _AdminFeatureCard(
-              width: double.infinity,
-              icon: Icons.rocket_launch_outlined,
-              title: 'Bring Your Club Onboard',
-              description:
-                  'Import your membership roster and historical sweepstakes reports.',
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ClubOnboardingScreen(club: club),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
             _FeatureAccessSummaryCard(
               isLoading: _isLoadingFeatures,
               errorMessage: _featureError,

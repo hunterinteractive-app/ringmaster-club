@@ -10,6 +10,7 @@ import 'config/app_versions.dart';
 import 'config/supabase_config.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/clubs/onboarding/club_onboarding_invite_screen.dart';
 import 'theme/app_theme.dart';
 
 final supabase = Supabase.instance.client;
@@ -131,6 +132,11 @@ class _RootState extends State<Root> {
 
     if (session == null) {
       return const LoginScreen();
+    }
+
+    final onboardingToken = Uri.base.queryParameters['onboarding']?.trim();
+    if (onboardingToken != null && onboardingToken.isNotEmpty) {
+      return ClubOnboardingInviteScreen(token: onboardingToken);
     }
 
     return const HomeScreen();
