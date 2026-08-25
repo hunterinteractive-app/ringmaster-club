@@ -57,6 +57,7 @@ class _ClubStaffPermissionsScreenState
 
   bool _canModifyStaffAssignment(_ClubStaffAssignment staff) {
     if (!_canManageStaff) return false;
+    if (staff.isInvitation) return false;
     if (staff.userId != null && staff.userId == _currentUserId) return false;
 
     final role = _dashboard?.roleById(staff.roleId);
@@ -193,6 +194,8 @@ class _ClubStaffPermissionsScreenState
       ),
     );
     if (!mounted || invited != true) return;
+    await _loadDashboard();
+    if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -320,17 +323,6 @@ class _ClubStaffPermissionsScreenState
             icon: const Icon(Icons.mark_email_unread_outlined),
             label: const Text('Invite Staff'),
           ),
-          const SizedBox(height: 12),
-          FloatingActionButton.extended(
-            heroTag: 'add_staff',
-            onPressed: _dashboard == null
-                ? null
-                : _canManageStaff
-                ? () => _openStaffEditor()
-                : _showPermissionSnackBar,
-            icon: const Icon(Icons.person_add_alt_1_outlined),
-            label: const Text('Add Existing Staff'),
-          ),
         ],
       ),
       body: _buildBody(),
@@ -404,7 +396,7 @@ class _ClubStaffPermissionsScreenState
             children: [
               _SummaryCard(
                 icon: Icons.people_alt_outlined,
-                label: 'Staff Members',
+                label: 'Staff & Invites',
                 value: dashboard.staff.length.toString(),
               ),
               _SummaryCard(
@@ -422,6 +414,14 @@ class _ClubStaffPermissionsScreenState
                 label: 'Active Staff',
                 value: dashboard.staff
                     .where((staff) => staff.status == 'active')
+                    .length
+                    .toString(),
+              ),
+              _SummaryCard(
+                icon: Icons.mark_email_unread_outlined,
+                label: 'Pending Invites',
+                value: dashboard.staff
+                    .where((staff) => staff.status == 'pending')
                     .length
                     .toString(),
               ),
@@ -452,13 +452,13 @@ class _ClubStaffPermissionsScreenState
                   ? 'No staff assignments yet'
                   : 'No matching staff',
               message: dashboard.staff.isEmpty
-                  ? 'Add officers, secretaries, treasurers, or other club staff to manage club operations.'
+                  ? 'Invite officers, secretaries, treasurers, or other club staff to manage club operations.'
                   : 'Try another name, email, role, or status.',
               actionLabel: dashboard.staff.isEmpty && _canManageStaff
-                  ? 'Add Staff'
+                  ? 'Invite Staff'
                   : null,
               onAction: dashboard.staff.isEmpty && _canManageStaff
-                  ? () => _openStaffEditor()
+                  ? _openInvitationDialog
                   : null,
             )
           else
@@ -536,7 +536,9 @@ class _StaffTable extends StatelessWidget {
                   DataCell(_StatusChip(status: item.status)),
                   DataCell(Text(_formatDate(item.createdAt))),
                   DataCell(
-                    canModify(item)
+                    item.isInvitation
+                        ? const Text('Awaiting sign-in')
+                        : canModify(item)
                         ? PopupMenuButton<String>(
                             onSelected: (value) {
                               if (value == 'edit') onEdit(item);
@@ -1270,6 +1272,7 @@ class _ClubStaffAssignment {
     required this.status,
     required this.displayName,
     required this.createdAt,
+    required this.isInvitation,
     this.userId,
     this.email,
     this.roleName,
@@ -1283,6 +1286,7 @@ class _ClubStaffAssignment {
   final String status;
   final String displayName;
   final DateTime createdAt;
+  final bool isInvitation;
 
   factory _ClubStaffAssignment.fromJson(Map<String, dynamic> json) {
     return _ClubStaffAssignment(
@@ -1297,6 +1301,7 @@ class _ClubStaffAssignment {
         fallback: _nullableString(json['email']) ?? 'Unknown Staff',
       ),
       createdAt: _dateValue(json['created_at']) ?? DateTime.now(),
+      isInvitation: json['is_invitation'] == true,
     );
   }
 }
