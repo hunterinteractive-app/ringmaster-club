@@ -141,7 +141,42 @@ class _ClubOnboardingInviteScreenState
     for (final item in savedOfficers.whereType<Map>()) {
       _officers.add(_OfficerDraft.fromJson(Map<String, dynamic>.from(item)));
     }
+    final seenEmptyTitles = <String>{};
+    _officers.removeWhere((officer) {
+      final isEmpty =
+          officer.name.text.trim().isEmpty && officer.email.text.trim().isEmpty;
+      if (!isEmpty || !seenEmptyTitles.contains(officer.title.text)) {
+        if (isEmpty) seenEmptyTitles.add(officer.title.text);
+        return false;
+      }
+      officer.dispose();
+      return true;
+    });
+    _ensureStandardOfficers();
   }
+
+  void _ensureStandardOfficers() {
+    const titles = ['President', 'Vice President', 'Secretary', 'Newsletter'];
+    for (final title in titles) {
+      if (!_officers.any((officer) => officer.title.text == title)) {
+        _officers.add(_OfficerDraft(title: title));
+      }
+    }
+  }
+
+  List<_OfficerDraft> get _enteredOfficers => _officers
+      .where(
+        (officer) =>
+            officer.name.text.trim().isNotEmpty ||
+            officer.email.text.trim().isNotEmpty,
+      )
+      .toList();
+
+  _OfficerDraft _officerFor(String title) =>
+      _officers.firstWhere((officer) => officer.title.text == title);
+
+  void _addDirector() =>
+      setState(() => _officers.add(_OfficerDraft(title: 'Director')));
 
   Map<String, dynamic> get _answers => {
     'club': {
@@ -162,7 +197,7 @@ class _ClubOnboardingInviteScreenState
       'email': _treasurerEmail.text.trim(),
       'address': _treasurerAddress.text.trim(),
     },
-    'officers': _officers.map((officer) => officer.toJson()).toList(),
+    'officers': _enteredOfficers.map((officer) => officer.toJson()).toList(),
     'setup': {
       'membership_management': _membership,
       'sanctions': _sanctions,
@@ -342,28 +377,51 @@ class _ClubOnboardingInviteScreenState
     children: [
       TextField(
         controller: _clubName,
+        autofillHints: const [AutofillHints.organizationName],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Legal club name *'),
       ),
       TextField(
         controller: _shortName,
+        textCapitalization: TextCapitalization.characters,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(
           labelText: 'Short name / abbreviation',
         ),
       ),
       TextField(
         controller: _website,
+        autofillHints: const [AutofillHints.url],
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Website URL'),
       ),
       TextField(
         controller: _contactName,
+        autofillHints: const [AutofillHints.name],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Primary contact name'),
       ),
       TextField(
         controller: _contactPhone,
+        autofillHints: const [AutofillHints.telephoneNumber],
+        keyboardType: TextInputType.phone,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Contact phone'),
       ),
       TextField(
         controller: _address,
+        autofillHints: const [AutofillHints.streetAddressLine1],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Mailing address'),
       ),
       Row(
@@ -371,20 +429,41 @@ class _ClubOnboardingInviteScreenState
           Expanded(
             child: TextField(
               controller: _city,
+              autofillHints: const [AutofillHints.addressCity],
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.next,
+              onEditingComplete: () => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(labelText: 'City'),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: TextField(
-              controller: _state,
+            child: DropdownButtonFormField<String>(
+              initialValue: _usStates.any((item) => item.code == _state.text)
+                  ? _state.text
+                  : null,
               decoration: const InputDecoration(labelText: 'State'),
+              isExpanded: true,
+              items: [
+                for (final state in _usStates)
+                  DropdownMenuItem(
+                    value: state.code,
+                    child: Text('${state.code} — ${state.name}'),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _state.text = value);
+              },
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
               controller: _postalCode,
+              autofillHints: const [AutofillHints.postalCode],
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.next,
+              onEditingComplete: () => FocusScope.of(context).nextFocus(),
               decoration: const InputDecoration(labelText: 'ZIP / postal code'),
             ),
           ),
@@ -396,24 +475,47 @@ class _ClubOnboardingInviteScreenState
   Widget _officersStep() => _StepContent(
     title: 'Add your officers',
     description:
-        'Titles are what members see. The access template controls what each person can do and can be customized later.',
+        'Enter each office separately. Titles are what members see; access templates can be customized later for each person.',
     children: [
       TextField(
         controller: _treasurerName,
+        autofillHints: const [AutofillHints.name],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Treasurer name'),
       ),
       TextField(
         controller: _treasurerEmail,
+        autofillHints: const [AutofillHints.email],
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Treasurer email'),
       ),
       TextField(
         controller: _treasurerAddress,
+        autofillHints: const [AutofillHints.fullStreetAddress],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(
           labelText: 'Treasurer / check-payment address',
         ),
       ),
       const SizedBox(height: 12),
-      for (final officer in _officers)
+      const Text(
+        'Club Officers',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 8),
+      _OfficerCard(officer: _officerFor('President')),
+      _OfficerCard(officer: _officerFor('Vice President')),
+      _OfficerCard(officer: _officerFor('Secretary')),
+      _OfficerCard(officer: _officerFor('Newsletter')),
+      for (final officer in _officers.where(
+        (officer) => officer.title.text == 'Director',
+      ))
         _OfficerCard(
           officer: officer,
           onRemove: () => setState(() {
@@ -422,9 +524,9 @@ class _ClubOnboardingInviteScreenState
           }),
         ),
       OutlinedButton.icon(
-        onPressed: () => setState(() => _officers.add(_OfficerDraft())),
+        onPressed: _addDirector,
         icon: const Icon(Icons.person_add_alt_1_outlined),
-        label: const Text('Add President, Secretary, VP, or Director'),
+        label: const Text('Add Director'),
       ),
     ],
   );
@@ -557,7 +659,9 @@ class _ClubOnboardingInviteScreenState
       _ReviewLine('Club account email', _email),
       _ReviewLine(
         'Officers',
-        _officers.isEmpty ? 'None added yet' : '${_officers.length} added',
+        _enteredOfficers.isEmpty
+            ? 'None added yet'
+            : '${_enteredOfficers.length} added',
       ),
       _ReviewLine(
         'Treasurer',
@@ -616,6 +720,66 @@ class _ReviewLine extends StatelessWidget {
   );
 }
 
+class _UsState {
+  const _UsState(this.code, this.name);
+  final String code;
+  final String name;
+}
+
+const _usStates = <_UsState>[
+  _UsState('AL', 'Alabama'),
+  _UsState('AK', 'Alaska'),
+  _UsState('AZ', 'Arizona'),
+  _UsState('AR', 'Arkansas'),
+  _UsState('CA', 'California'),
+  _UsState('CO', 'Colorado'),
+  _UsState('CT', 'Connecticut'),
+  _UsState('DE', 'Delaware'),
+  _UsState('FL', 'Florida'),
+  _UsState('GA', 'Georgia'),
+  _UsState('HI', 'Hawaii'),
+  _UsState('ID', 'Idaho'),
+  _UsState('IL', 'Illinois'),
+  _UsState('IN', 'Indiana'),
+  _UsState('IA', 'Iowa'),
+  _UsState('KS', 'Kansas'),
+  _UsState('KY', 'Kentucky'),
+  _UsState('LA', 'Louisiana'),
+  _UsState('ME', 'Maine'),
+  _UsState('MD', 'Maryland'),
+  _UsState('MA', 'Massachusetts'),
+  _UsState('MI', 'Michigan'),
+  _UsState('MN', 'Minnesota'),
+  _UsState('MS', 'Mississippi'),
+  _UsState('MO', 'Missouri'),
+  _UsState('MT', 'Montana'),
+  _UsState('NE', 'Nebraska'),
+  _UsState('NV', 'Nevada'),
+  _UsState('NH', 'New Hampshire'),
+  _UsState('NJ', 'New Jersey'),
+  _UsState('NM', 'New Mexico'),
+  _UsState('NY', 'New York'),
+  _UsState('NC', 'North Carolina'),
+  _UsState('ND', 'North Dakota'),
+  _UsState('OH', 'Ohio'),
+  _UsState('OK', 'Oklahoma'),
+  _UsState('OR', 'Oregon'),
+  _UsState('PA', 'Pennsylvania'),
+  _UsState('RI', 'Rhode Island'),
+  _UsState('SC', 'South Carolina'),
+  _UsState('SD', 'South Dakota'),
+  _UsState('TN', 'Tennessee'),
+  _UsState('TX', 'Texas'),
+  _UsState('UT', 'Utah'),
+  _UsState('VT', 'Vermont'),
+  _UsState('VA', 'Virginia'),
+  _UsState('WA', 'Washington'),
+  _UsState('WV', 'West Virginia'),
+  _UsState('WI', 'Wisconsin'),
+  _UsState('WY', 'Wyoming'),
+  _UsState('DC', 'District of Columbia'),
+];
+
 class _OfficerDraft {
   _OfficerDraft({
     String name = '',
@@ -650,9 +814,9 @@ class _OfficerDraft {
 }
 
 class _OfficerCard extends StatelessWidget {
-  const _OfficerCard({required this.officer, required this.onRemove});
+  const _OfficerCard({required this.officer, this.onRemove});
   final _OfficerDraft officer;
-  final VoidCallback onRemove;
+  final VoidCallback? onRemove;
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
@@ -664,6 +828,9 @@ class _OfficerCard extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: officer.name,
+                  autofillHints: const [AutofillHints.name],
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(labelText: 'Name'),
                 ),
               ),
@@ -671,23 +838,27 @@ class _OfficerCard extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: officer.email,
+                  autofillHints: const [AutofillHints.email],
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(labelText: 'Email'),
                 ),
               ),
-              IconButton(
-                onPressed: onRemove,
-                tooltip: 'Remove officer',
-                icon: const Icon(Icons.remove_circle_outline),
-              ),
+              if (onRemove != null)
+                IconButton(
+                  onPressed: onRemove,
+                  tooltip: 'Remove director',
+                  icon: const Icon(Icons.remove_circle_outline),
+                ),
             ],
           ),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
-                child: TextField(
-                  controller: officer.title,
+                child: InputDecorator(
                   decoration: const InputDecoration(labelText: 'Office title'),
+                  child: Text(officer.title.text),
                 ),
               ),
               const SizedBox(width: 12),
@@ -712,7 +883,9 @@ class _OfficerCard extends StatelessWidget {
                     ),
                   ],
                   onChanged: (value) {
-                    if (value != null) officer.access = value;
+                    if (value != null) {
+                      officer.access = value;
+                    }
                   },
                 ),
               ),
