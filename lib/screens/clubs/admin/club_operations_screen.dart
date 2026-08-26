@@ -98,7 +98,14 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
       content: SizedBox(
         width: 680,
         child: SingleChildScrollView(
-          child: Text((draft['answers'] ?? const {}).toString()),
+          child: _OnboardingDetails(
+            answers: Map<String, dynamic>.from(
+              draft['answers'] as Map? ?? const {},
+            ),
+            entitlements: Map<String, dynamic>.from(
+              draft['purchased_entitlements'] as Map? ?? const {},
+            ),
+          ),
         ),
       ),
       actions: [
@@ -225,6 +232,156 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
               }),
             ],
           ),
+  );
+}
+
+class _OnboardingDetails extends StatelessWidget {
+  const _OnboardingDetails({required this.answers, required this.entitlements});
+
+  final Map<String, dynamic> answers;
+  final Map<String, dynamic> entitlements;
+
+  @override
+  Widget build(BuildContext context) {
+    Map<String, dynamic> map(String key) =>
+        Map<String, dynamic>.from(answers[key] as Map? ?? const {});
+    final club = map('club');
+    final setup = map('setup');
+    final treasurer = map('treasurer');
+    final imports = map('imports');
+    final officers = (answers['officers'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    final membershipTypes = (setup['membership_types'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Section('Purchased services', [
+          _Field('Plan', entitlements['plan_key']),
+          _Field(
+            'Add-ons',
+            (entitlements['addons'] as List? ?? const []).join(', '),
+          ),
+        ]),
+        _Section('Club information', [
+          _Field('Name', club['name']),
+          _Field('Short name', club['short_name']),
+          _Field('Website', club['website_url']),
+          _Field('Contact', club['contact_name']),
+          _Field('Email', club['contact_email']),
+          _Field('Phone', club['contact_phone']),
+          _Field('Address', _address(club)),
+        ]),
+        _Section('Setup & payments', [
+          _Field(
+            'Membership management',
+            _yesNo(setup['membership_management']),
+          ),
+          _Field('Online payments', _yesNo(setup['online_payments'])),
+          _Field('Payment provider', setup['payment_provider']),
+          _Field('Mailed checks', _yesNo(setup['mailed_checks'])),
+          _Field('Events & meetings', _yesNo(setup['events'])),
+          _Field('Sanction requests', _yesNo(setup['sanctions'])),
+          _Field('Sweepstakes', _yesNo(setup['sweepstakes'])),
+        ]),
+        if (membershipTypes.isNotEmpty)
+          _Section(
+            'Membership types',
+            membershipTypes
+                .map(
+                  (type) => _Field(
+                    type['name']?.toString() ?? 'Membership',
+                    '\$${type['price'] ?? '0'}',
+                  ),
+                )
+                .toList(),
+          ),
+        if (officers.isNotEmpty)
+          _Section(
+            'Officers',
+            officers
+                .map(
+                  (officer) => _Field(
+                    officer['title']?.toString() ?? 'Officer',
+                    [officer['name'], officer['email']]
+                        .whereType<String>()
+                        .where((v) => v.trim().isNotEmpty)
+                        .join(' · '),
+                  ),
+                )
+                .toList(),
+          ),
+        _Section('Treasurer / check payments', [
+          _Field('Name', treasurer['name']),
+          _Field('Email', treasurer['email']),
+          _Field('Address', treasurer['address']),
+        ]),
+        _Section('Imports', [
+          _Field('Membership roster', _yesNo(imports['membership_roster'])),
+          _Field('Sweepstakes archive', _yesNo(imports['sweepstakes_archive'])),
+          _Field(
+            'Review before import',
+            _yesNo(imports['review_before_import']),
+          ),
+        ]),
+      ],
+    );
+  }
+
+  String _yesNo(Object? value) => value == true ? 'Yes' : 'No';
+  String _address(Map<String, dynamic> club) => [
+    club['address'],
+    club['city'],
+    club['state'],
+    club['postal_code'],
+    club['country'],
+  ].whereType<String>().where((v) => v.trim().isNotEmpty).join(', ');
+}
+
+class _Section extends StatelessWidget {
+  const _Section(this.title, this.fields);
+  final String title;
+  final List<_Field> fields;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        ...fields.where((field) => field.value.trim().isNotEmpty),
+      ],
+    ),
+  );
+}
+
+class _Field extends StatelessWidget {
+  _Field(this.label, Object? value) : value = value?.toString() ?? '';
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 180,
+          child: Text(label, style: Theme.of(context).textTheme.labelLarge),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
   );
 }
 
