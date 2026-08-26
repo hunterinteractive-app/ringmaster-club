@@ -11,6 +11,12 @@ entrypoint = "./functions/stripe-club-billing-subscription-webhook/index.ts"
 # static_files = [ "./functions/stripe-club-billing-subscription-webhook/*.html" ]
 [functions.process-club-communication-emails]
 verify_jwt = false
+
+[functions.square-club-connect-start]
+verify_jwt = true
+
+[functions.square-club-connect-callback]
+verify_jwt = false
 [functions.receive-sweepstakes-report]
 enabled = true
 verify_jwt = false

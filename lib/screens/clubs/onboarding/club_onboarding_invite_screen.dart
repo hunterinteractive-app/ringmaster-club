@@ -666,7 +666,7 @@ class _ClubOnboardingInviteScreenState
         child: Padding(
           padding: EdgeInsets.all(14),
           child: Text(
-            'Stripe Connect will open immediately after RingMaster activates your club. Square and PayPal are recorded for follow-up until their Club connection flows are available.',
+            'Stripe Connect or Square will open immediately after RingMaster activates your club. PayPal is recorded for follow-up while its Club connection flow is prepared.',
           ),
         ),
       ),
@@ -698,6 +698,37 @@ class _ClubOnboardingInviteScreenState
     } catch (error) {
       if (mounted) {
         setState(() => _error = 'Unable to start Stripe Connect: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _startSquareConnectOnboarding() async {
+    final clubId = _provisionedClubId;
+    if (clubId == null || _saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final response = await _supabase.functions.invoke(
+        'square-club-connect-start',
+        body: {'club_id': clubId},
+      );
+      final data = response.data;
+      final url = data is Map ? data['authorization_url']?.toString() : null;
+      if (url == null || url.isEmpty) {
+        throw Exception('Square did not return a connection link.');
+      }
+      final launched = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('Unable to open Square.');
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Unable to start Square connection: $error');
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -754,10 +785,31 @@ class _ClubOnboardingInviteScreenState
             ),
           )
         else if (_paymentProvider == 'square')
-          const _ConnectionQueuedCard(
-            provider: 'Square',
-            message:
-                'Your Square preference is recorded. RingMaster will contact you when the Club Square connection is ready.',
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connect Square',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Authorize Square now to accept online membership payments.',
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _startSquareConnectOnboarding,
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: Text(_saving ? 'Opening Square…' : 'Connect Square'),
+                  ),
+                ],
+              ),
+            ),
           )
         else if (_paymentProvider == 'paypal')
           const _ConnectionQueuedCard(
