@@ -91,6 +91,25 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
     }
   }
 
+  Future<void> _showDetails(Map<String, dynamic> draft) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(draft['club_name']?.toString() ?? 'Onboarding details'),
+      content: SizedBox(
+        width: 680,
+        child: SingleChildScrollView(
+          child: Text((draft['answers'] ?? const {}).toString()),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -184,6 +203,12 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: () => _showDetails(draft),
+                          icon: const Icon(Icons.visibility_outlined),
+                          label: const Text('View entered information'),
                         ),
                         if (status == 'ready_for_review') ...[
                           const SizedBox(height: 12),
