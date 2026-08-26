@@ -13,6 +13,7 @@ import '../services/clubs/club_session.dart';
 import '../theme/app_theme.dart';
 import 'clubs/club_portal_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
+import 'clubs/admin/club_operations_screen.dart';
 import 'clubs/member/club_member_home_screen.dart';
 import 'clubs/member/member_network_screen.dart';
 
@@ -27,6 +28,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _checkingLegal = true;
+  bool _isOperationsUser = false;
   String? _displayName;
   late final ClubSession _clubSession;
 
@@ -131,6 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _nameFromUser(user);
         _checkingLegal = false;
       });
+      await _loadOperationsAccess();
     } catch (error) {
       if (!mounted) return;
 
@@ -167,6 +170,19 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
+
+  Future<void> _loadOperationsAccess() async {
+    try {
+      final allowed = await supabase.rpc('is_club_operations_user');
+      if (mounted) setState(() => _isOperationsUser = allowed == true);
+    } catch (_) {
+      // Internal tooling must stay invisible if its migration is not live yet.
+    }
+  }
+
+  Future<void> _openOperations() => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const ClubOperationsScreen()));
 
   Future<bool> _ensureRequiredAccountSetup(String userId) async {
     final existingRows = await supabase
@@ -903,6 +919,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                 'Update your profile and account preferences.',
                             onTap: _openAccountSettings,
                           ),
+                          if (_isOperationsUser)
+                            _HomeActionCard(
+                              width: width,
+                              icon: Icons.admin_panel_settings_outlined,
+                              title: 'RingMaster Operations',
+                              description:
+                                  'Review and approve private club onboarding drafts.',
+                              onTap: _openOperations,
+                            ),
                         ],
                       );
                     },
