@@ -78,17 +78,26 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
         'approve_club_onboarding_from_operations',
         params: {'p_draft_id': draft['id']},
       );
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$name was approved and provisioned.')),
-        );
+      if (mounted) _showNotice('$name was approved and provisioned.');
       await _load();
     } catch (error) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Unable to approve: $error')));
+      if (mounted) _showNotice('Unable to approve: $error', isError: true);
     }
+  }
+
+  void _showNotice(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(20, 20, 20, 72),
+          showCloseIcon: true,
+          backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+          duration: const Duration(seconds: 12),
+        ),
+      );
   }
 
   Future<void> _showDetails(Map<String, dynamic> draft) => showDialog<void>(
