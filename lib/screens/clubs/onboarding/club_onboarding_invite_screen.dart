@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ClubOnboardingInviteScreen extends StatefulWidget {
   const ClubOnboardingInviteScreen({super.key, required this.token});
@@ -26,14 +27,15 @@ class _ClubOnboardingInviteScreenState
   final _treasurerName = TextEditingController();
   final _treasurerEmail = TextEditingController();
   final _treasurerAddress = TextEditingController();
-  final _stripe = TextEditingController();
-  final _square = TextEditingController();
   final _officers = <_OfficerDraft>[];
 
   bool _loading = true;
   bool _saving = false;
   String? _error;
   String _email = '';
+  String _onboardingStatus = 'in_progress';
+  String? _provisionedClubId;
+  Map<String, dynamic> _purchasedEntitlements = const {};
   int _step = 0;
   bool _membership = true;
   bool _sanctions = false;
@@ -66,8 +68,6 @@ class _ClubOnboardingInviteScreenState
       _treasurerName,
       _treasurerEmail,
       _treasurerAddress,
-      _stripe,
-      _square,
     ]) {
       controller.dispose();
     }
@@ -86,6 +86,11 @@ class _ClubOnboardingInviteScreenState
       final data = Map<String, dynamic>.from(response as Map);
       final answers = Map<String, dynamic>.from(data['answers'] as Map? ?? {});
       _email = data['email']?.toString() ?? '';
+      _onboardingStatus = data['status']?.toString() ?? 'in_progress';
+      _provisionedClubId = data['provisioned_club_id']?.toString();
+      _purchasedEntitlements = Map<String, dynamic>.from(
+        data['purchased_entitlements'] as Map? ?? const {},
+      );
       _restore(answers);
       _step = _stepFor(data['current_step']?.toString());
       if (mounted) setState(() => _loading = false);
@@ -126,15 +131,13 @@ class _ClubOnboardingInviteScreenState
     _treasurerName.text = treasurer['name']?.toString() ?? '';
     _treasurerEmail.text = treasurer['email']?.toString() ?? '';
     _treasurerAddress.text = treasurer['address']?.toString() ?? '';
-    _membership = setup['membership_management'] != false;
-    _sanctions = setup['sanctions'] == true;
-    _events = setup['events'] == true;
-    _sweepstakes = setup['sweepstakes'] == true;
+    _membership = _hasPurchasedAddOn('membership_management');
+    _sanctions = _hasPurchasedAddOn('sanction_requests');
+    _events = _hasPurchasedAddOn('events_meetings');
+    _sweepstakes = _hasPurchasedAddOn('sweepstakes');
     _onlinePayments = setup['online_payments'] == true;
     _mailedChecks = setup['mailed_checks'] != false;
     _paymentProvider = setup['payment_provider']?.toString() ?? 'not_ready';
-    _stripe.text = setup['stripe_contact']?.toString() ?? '';
-    _square.text = setup['square_contact']?.toString() ?? '';
     _memberImport = imports['membership_roster'] == true;
     _sweepstakesImport = imports['sweepstakes_archive'] == true;
     final savedOfficers = answers['officers'] as List? ?? const [];
@@ -154,6 +157,20 @@ class _ClubOnboardingInviteScreenState
     });
     _ensureStandardOfficers();
   }
+
+  bool _hasPurchasedAddOn(String addOnKey) {
+    final values = _purchasedEntitlements['addons'] as List? ?? const [];
+    return values.map((value) => value.toString()).contains(addOnKey);
+  }
+
+  String get _purchasedPlanKey =>
+      _purchasedEntitlements['plan_key']?.toString() ?? 'small_club_base';
+
+  String get _purchasedPlanLabel => switch (_purchasedPlanKey) {
+    'standard_club_complete' => 'Standard Club Complete',
+    'standard_club_base' => 'Standard Club Base',
+    _ => 'Small Club Base',
+  };
 
   void _ensureStandardOfficers() {
     const titles = ['President', 'Vice President', 'Secretary', 'Newsletter'];
@@ -227,9 +244,7 @@ class _ClubOnboardingInviteScreenState
       'online_payments': _onlinePayments,
       'mailed_checks': _mailedChecks,
       'payment_provider': _paymentProvider,
-      'stripe_contact': _stripe.text.trim(),
-      'square_contact': _square.text.trim(),
-      'paypal_requested': _paymentProvider == 'paypal_soon',
+      'paypal_requested': _paymentProvider == 'paypal',
       'membership_types': const [
         {'name': 'Individual', 'price': 10},
         {'name': 'Family', 'price': 15},
@@ -262,6 +277,7 @@ class _ClubOnboardingInviteScreenState
           'p_answers': _answers,
         },
       );
+      _onboardingStatus = 'ready_for_review';
       if (mounted) setState(() => _step = nextStep);
     } catch (error) {
       if (mounted) setState(() => _error = 'Unable to save progress: $error');
@@ -329,6 +345,9 @@ class _ClubOnboardingInviteScreenState
           ),
         ),
       );
+    }
+    if (_onboardingStatus == 'approved' && _provisionedClubId != null) {
+      return _activationScreen();
     }
     return Scaffold(
       appBar: AppBar(title: const Text('Set Up Your Club')),
@@ -553,39 +572,73 @@ class _ClubOnboardingInviteScreenState
   );
 
   Widget _setupStep() => _StepContent(
-    title: 'Choose services and payment setup',
+    title: 'Purchased services and payment setup',
     description:
-        'Online payments make renewal and dues processing easier. Stripe and Square are available now; PayPal is being prepared.',
+        'Your plan and included services are set from your purchase. Choose a payment provider only if you want to accept payments online.',
     children: [
-      SwitchListTile(
-        value: _membership,
-        onChanged: (value) => setState(() => _membership = value),
-        title: const Text('Membership management'),
-      ),
-      SwitchListTile(
-        value: _sanctions,
-        onChanged: (value) => setState(() => _sanctions = value),
-        title: const Text('Sanction requests'),
-      ),
-      SwitchListTile(
-        value: _events,
-        onChanged: (value) => setState(() => _events = value),
-        title: const Text('Events & meetings'),
-      ),
-      SwitchListTile(
-        value: _sweepstakes,
-        onChanged: (value) => setState(() => _sweepstakes = value),
-        title: const Text('Sweepstakes'),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Included with your purchase',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              _PurchasedServiceRow(label: 'Plan', value: _purchasedPlanLabel),
+              _PurchasedServiceRow(
+                label: 'Membership management',
+                included: _membership,
+              ),
+              _PurchasedServiceRow(
+                label: 'Sanction requests',
+                included: _sanctions,
+              ),
+              _PurchasedServiceRow(
+                label: 'Events & meetings',
+                included: _events,
+              ),
+              _PurchasedServiceRow(
+                label: 'Sweepstakes',
+                included: _sweepstakes,
+              ),
+              _PurchasedServiceRow(
+                label: 'Email communications',
+                included: _hasPurchasedAddOn('email'),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Need to change your plan or included services? Contact RingMaster before activation.',
+              ),
+            ],
+          ),
+        ),
       ),
       const Divider(),
       SwitchListTile(
         value: _onlinePayments,
-        onChanged: (value) => setState(() => _onlinePayments = value),
+        onChanged: _membership
+            ? (value) => setState(() {
+                _onlinePayments = value;
+                if (!value) _paymentProvider = 'not_ready';
+              })
+            : null,
         title: const Text('Accept online membership payments'),
+        subtitle: Text(
+          _membership
+              ? 'Choose a provider below. Stripe launches after your club is activated.'
+              : 'Membership Management is not included with this purchase.',
+        ),
       ),
       SwitchListTile(
         value: _mailedChecks,
-        onChanged: (value) => setState(() => _mailedChecks = value),
+        onChanged: _membership
+            ? (value) => setState(() => _mailedChecks = value)
+            : null,
         title: const Text('Accept mailed checks'),
       ),
       DropdownButtonFormField<String>(
@@ -599,37 +652,134 @@ class _ClubOnboardingInviteScreenState
           ),
           DropdownMenuItem(value: 'square', child: Text('Square')),
           DropdownMenuItem(
-            value: 'paypal_soon',
+            value: 'paypal',
             child: Text('PayPal — coming soon'),
           ),
         ],
-        onChanged: (value) {
-          if (value != null) setState(() => _paymentProvider = value);
-        },
+        onChanged: _onlinePayments
+            ? (value) {
+                if (value != null) setState(() => _paymentProvider = value);
+              }
+            : null,
       ),
-      if (_paymentProvider == 'stripe')
-        TextField(
-          controller: _stripe,
-          decoration: const InputDecoration(
-            labelText: 'Stripe setup contact / notes',
-          ),
-        ),
-      if (_paymentProvider == 'square')
-        TextField(
-          controller: _square,
-          decoration: const InputDecoration(
-            labelText: 'Square setup contact / notes',
-          ),
-        ),
       const Card(
         child: Padding(
           padding: EdgeInsets.all(14),
           child: Text(
-            'Default membership plan: Individual \$10, Family \$15, and Youth \$5. You will review and adjust all plans before activation.',
+            'Stripe Connect will open immediately after RingMaster activates your club. Square and PayPal are recorded for follow-up until their Club connection flows are available.',
           ),
         ),
       ),
     ],
+  );
+
+  Future<void> _startStripeConnectOnboarding() async {
+    final clubId = _provisionedClubId;
+    if (clubId == null || _saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final response = await _supabase.functions.invoke(
+        'stripe-club-connect-start-onboarding',
+        body: {'club_id': clubId, 'return_url': Uri.base.toString()},
+      );
+      final data = response.data;
+      final url = data is Map ? data['url']?.toString() : null;
+      if (url == null || url.isEmpty) {
+        throw Exception('Stripe did not return a connection link.');
+      }
+      final launched = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('Unable to open Stripe Connect.');
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Unable to start Stripe Connect: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _activationScreen() => Scaffold(
+    appBar: AppBar(title: const Text('Your Club Is Ready')),
+    body: ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Icon(Icons.celebration_outlined, size: 56),
+        const SizedBox(height: 16),
+        Text(
+          _clubName.text.trim().isEmpty
+              ? 'Your club is activated'
+              : _clubName.text.trim(),
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'RingMaster has activated your club and applied the plan and services in your purchase.',
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        if (_paymentProvider == 'stripe')
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connect Stripe',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Complete Stripe Connect now to accept online membership payments.',
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _startStripeConnectOnboarding,
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: Text(_saving ? 'Opening Stripe…' : 'Connect Stripe'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else if (_paymentProvider == 'square')
+          const _ConnectionQueuedCard(
+            provider: 'Square',
+            message:
+                'Your Square preference is recorded. RingMaster will contact you when the Club Square connection is ready.',
+          )
+        else if (_paymentProvider == 'paypal')
+          const _ConnectionQueuedCard(
+            provider: 'PayPal',
+            message:
+                'Your PayPal preference is recorded. PayPal connection for RingMaster Club is coming soon.',
+          )
+        else
+          const _ConnectionQueuedCard(
+            provider: 'Online payments',
+            message:
+                'You can connect a payment provider later from Billing & Add-ons.',
+          ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
+      ],
+    ),
   );
 
   Widget _importsStep() => _StepContent(
@@ -725,6 +875,65 @@ class _StepContent extends StatelessWidget {
               Padding(padding: const EdgeInsets.only(bottom: 12), child: child),
         ),
       ],
+    ),
+  );
+}
+
+class _PurchasedServiceRow extends StatelessWidget {
+  const _PurchasedServiceRow({required this.label, this.value, this.included});
+
+  final String label;
+  final String? value;
+  final bool? included;
+
+  @override
+  Widget build(BuildContext context) {
+    final isIncluded = included ?? true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            isIncluded
+                ? Icons.check_circle_outline
+                : Icons.remove_circle_outline,
+            size: 18,
+            color: isIncluded
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+          Text(value ?? (isIncluded ? 'Included' : 'Not included')),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectionQueuedCard extends StatelessWidget {
+  const _ConnectionQueuedCard({required this.provider, required this.message});
+
+  final String provider;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            provider,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(message),
+        ],
+      ),
     ),
   );
 }
