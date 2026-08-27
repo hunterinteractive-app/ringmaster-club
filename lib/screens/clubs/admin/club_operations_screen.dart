@@ -100,31 +100,45 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
       );
   }
 
-  Future<void> _showDetails(Map<String, dynamic> draft) => showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(draft['club_name']?.toString() ?? 'Onboarding details'),
-      content: SizedBox(
-        width: 680,
-        child: SingleChildScrollView(
-          child: _OnboardingDetails(
-            answers: Map<String, dynamic>.from(
-              draft['answers'] as Map? ?? const {},
-            ),
-            entitlements: Map<String, dynamic>.from(
-              draft['purchased_entitlements'] as Map? ?? const {},
+  Future<void> _showDetails(Map<String, dynamic> draft) async {
+    Map<String, dynamic> roster = const {};
+    try {
+      roster = Map<String, dynamic>.from(
+        await _supabase.rpc(
+              'get_club_operations_roster_preview',
+              params: {'p_draft_id': draft['id']},
+            )
+            as Map,
+      );
+    } catch (_) {}
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(draft['club_name']?.toString() ?? 'Onboarding details'),
+        content: SizedBox(
+          width: 680,
+          child: SingleChildScrollView(
+            child: _OnboardingDetails(
+              answers: Map<String, dynamic>.from(
+                draft['answers'] as Map? ?? const {},
+              ),
+              entitlements: Map<String, dynamic>.from(
+                draft['purchased_entitlements'] as Map? ?? const {},
+              ),
+              roster: roster,
             ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
-      ],
-    ),
-  );
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -245,10 +259,15 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
 }
 
 class _OnboardingDetails extends StatelessWidget {
-  const _OnboardingDetails({required this.answers, required this.entitlements});
+  const _OnboardingDetails({
+    required this.answers,
+    required this.entitlements,
+    required this.roster,
+  });
 
   final Map<String, dynamic> answers;
   final Map<String, dynamic> entitlements;
+  final Map<String, dynamic> roster;
 
   @override
   Widget build(BuildContext context) {
@@ -337,6 +356,8 @@ class _OnboardingDetails extends StatelessWidget {
             _yesNo(imports['review_before_import']),
           ),
         ]),
+        if (roster['has_preview'] == true)
+          _RosterPreviewSection(roster: roster),
       ],
     );
   }
@@ -349,6 +370,85 @@ class _OnboardingDetails extends StatelessWidget {
     club['postal_code'],
     club['country'],
   ].whereType<String>().where((v) => v.trim().isNotEmpty).join(', ');
+}
+
+class _RosterPreviewSection extends StatelessWidget {
+  const _RosterPreviewSection({required this.roster});
+  final Map<String, dynamic> roster;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = (roster['rows'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Membership roster preview',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${roster['file_name']} · ${roster['total_rows']} rows · ${roster['valid_rows']} ready · ${roster['error_rows']} need attention',
+          ),
+          const SizedBox(height: 10),
+          if (rows.isEmpty)
+            const Text('No parsed rows were saved.')
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('Row')),
+                  DataColumn(label: Text('Proposed member')),
+                  DataColumn(label: Text('Email')),
+                  DataColumn(label: Text('Membership')),
+                  DataColumn(label: Text('Review')),
+                ],
+                rows: rows.take(25).map((row) {
+                  final member = Map<String, dynamic>.from(
+                    row['proposed_member'] as Map? ?? const {},
+                  );
+                  final name = [member['first_name'], member['last_name']]
+                      .whereType<String>()
+                      .where((value) => value.trim().isNotEmpty)
+                      .join(' ');
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(row['row_number']?.toString() ?? '')),
+                      DataCell(Text(name.isEmpty ? 'Missing name' : name)),
+                      DataCell(Text(member['email']?.toString() ?? '')),
+                      DataCell(
+                        Text(
+                          member['membership_type']?.toString() ??
+                              'Needs review',
+                        ),
+                      ),
+                      DataCell(
+                        Text((row['errors'] as List? ?? const []).join(' · ')),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+          if (rows.length > 25)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Showing the first 25 rows. The complete staged roster remains available for import review.',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Section extends StatelessWidget {

@@ -29,7 +29,8 @@ class ClubSummary {
   final String? membershipStatus;
   final bool? sanctionRequestsEnabled;
 
-  bool get isStaff => relationshipType == 'staff';
+  bool get isStaff =>
+      relationshipType == 'staff' || relationshipType == 'support';
 
   bool get isMember => relationshipType == 'member';
 

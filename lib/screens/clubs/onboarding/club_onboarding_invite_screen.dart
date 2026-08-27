@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -19,14 +20,26 @@ class _ClubOnboardingInviteScreenState
   final _shortName = TextEditingController();
   final _website = TextEditingController();
   final _contactName = TextEditingController();
+  final _contactEmail = TextEditingController();
   final _contactPhone = TextEditingController();
-  final _address = TextEditingController();
+  final _addressLine1 = TextEditingController();
+  final _addressLine2 = TextEditingController();
   final _city = TextEditingController();
   final _state = TextEditingController();
   final _postalCode = TextEditingController();
   final _treasurerName = TextEditingController();
   final _treasurerEmail = TextEditingController();
-  final _treasurerAddress = TextEditingController();
+  final _treasurerAddressLine1 = TextEditingController();
+  final _treasurerAddressLine2 = TextEditingController();
+  final _treasurerCity = TextEditingController();
+  final _treasurerState = TextEditingController();
+  final _treasurerPostalCode = TextEditingController();
+  final _description = TextEditingController();
+  final _logoUrl = TextEditingController();
+  final _brandPrimaryColor = TextEditingController();
+  final _brandSecondaryColor = TextEditingController();
+  final _communicationSenderName = TextEditingController();
+  final _communicationReplyToEmail = TextEditingController();
   final _officers = <_OfficerDraft>[];
 
   bool _loading = true;
@@ -46,6 +59,23 @@ class _ClubOnboardingInviteScreenState
   bool _memberImport = false;
   bool _sweepstakesImport = false;
   String _paymentProvider = 'not_ready';
+  String _clubType = 'local';
+  String _speciesScope = 'both';
+  bool _publicProfile = true;
+  bool _publicEvents = false;
+  bool _publicDocuments = false;
+  bool _publicSweepstakes = false;
+  bool _requireArbaNumber = true;
+  bool _requireMembershipApproval = false;
+  bool _allowAutoRenew = false;
+  int _adultMinimumAge = 19;
+  int _youthMaximumAge = 18;
+  int _familyIncludedAdults = 2;
+  int _familyIncludedYouth = 3;
+  double _additionalYouthPrice = 0;
+  String _senderChoice = 'club_name';
+  String _replyToChoice = 'club_email';
+  Map<String, dynamic>? _rosterPreview;
 
   @override
   void initState() {
@@ -60,14 +90,26 @@ class _ClubOnboardingInviteScreenState
       _shortName,
       _website,
       _contactName,
+      _contactEmail,
       _contactPhone,
-      _address,
+      _addressLine1,
+      _addressLine2,
       _city,
       _state,
       _postalCode,
       _treasurerName,
       _treasurerEmail,
-      _treasurerAddress,
+      _treasurerAddressLine1,
+      _treasurerAddressLine2,
+      _treasurerCity,
+      _treasurerState,
+      _treasurerPostalCode,
+      _description,
+      _logoUrl,
+      _brandPrimaryColor,
+      _brandSecondaryColor,
+      _communicationSenderName,
+      _communicationReplyToEmail,
     ]) {
       controller.dispose();
     }
@@ -92,6 +134,13 @@ class _ClubOnboardingInviteScreenState
         data['purchased_entitlements'] as Map? ?? const {},
       );
       _restore(answers);
+      _rosterPreview = Map<String, dynamic>.from(
+        await _supabase.rpc(
+              'get_club_onboarding_roster_preview',
+              params: {'p_token': widget.token},
+            )
+            as Map,
+      );
       _step = _stepFor(data['current_step']?.toString());
       if (mounted) setState(() => _loading = false);
     } catch (error) {
@@ -123,14 +172,35 @@ class _ClubOnboardingInviteScreenState
     _shortName.text = club['short_name']?.toString() ?? '';
     _website.text = club['website_url']?.toString() ?? '';
     _contactName.text = club['contact_name']?.toString() ?? '';
+    _contactEmail.text = club['contact_email']?.toString() ?? _email;
     _contactPhone.text = club['contact_phone']?.toString() ?? '';
-    _address.text = club['address']?.toString() ?? '';
+    _addressLine1.text =
+        club['address_line1']?.toString() ?? club['address']?.toString() ?? '';
+    _addressLine2.text = club['address_line2']?.toString() ?? '';
     _city.text = club['city']?.toString() ?? '';
     _state.text = club['state']?.toString() ?? '';
     _postalCode.text = club['postal_code']?.toString() ?? '';
     _treasurerName.text = treasurer['name']?.toString() ?? '';
     _treasurerEmail.text = treasurer['email']?.toString() ?? '';
-    _treasurerAddress.text = treasurer['address']?.toString() ?? '';
+    _treasurerAddressLine1.text =
+        treasurer['address_line1']?.toString() ??
+        treasurer['address']?.toString() ??
+        '';
+    _treasurerAddressLine2.text = treasurer['address_line2']?.toString() ?? '';
+    _treasurerCity.text = treasurer['city']?.toString() ?? '';
+    _treasurerState.text = treasurer['state']?.toString() ?? '';
+    _treasurerPostalCode.text = treasurer['postal_code']?.toString() ?? '';
+    _description.text = club['description']?.toString() ?? '';
+    _logoUrl.text = club['logo_url']?.toString() ?? '';
+    final branding = Map<String, dynamic>.from(club['branding'] as Map? ?? {});
+    _brandPrimaryColor.text = branding['primary_color']?.toString() ?? '';
+    _brandSecondaryColor.text = branding['secondary_color']?.toString() ?? '';
+    _clubType = club['type']?.toString() ?? 'local';
+    _speciesScope = club['species_scope']?.toString() ?? 'both';
+    _publicProfile = club['public_profile'] != false;
+    _publicEvents = club['public_events'] == true;
+    _publicDocuments = club['public_documents'] == true;
+    _publicSweepstakes = club['public_sweepstakes'] == true;
     _membership = _hasPurchasedAddOn('membership_management');
     _sanctions = _hasPurchasedAddOn('sanction_requests');
     _events = _hasPurchasedAddOn('events_meetings');
@@ -138,6 +208,25 @@ class _ClubOnboardingInviteScreenState
     _onlinePayments = setup['online_payments'] == true;
     _mailedChecks = setup['mailed_checks'] != false;
     _paymentProvider = setup['payment_provider']?.toString() ?? 'not_ready';
+    final rules = Map<String, dynamic>.from(
+      setup['membership_rules'] as Map? ?? const {},
+    );
+    _requireArbaNumber = rules['require_arba_number'] != false;
+    _requireMembershipApproval = rules['requires_approval'] == true;
+    _allowAutoRenew = rules['allow_auto_renew'] == true;
+    _adultMinimumAge = _asInt(rules['adult_minimum_age'], 19);
+    _youthMaximumAge = _asInt(rules['youth_maximum_age'], 18);
+    _familyIncludedAdults = _asInt(rules['family_included_adults'], 2);
+    _familyIncludedYouth = _asInt(rules['family_included_youth'], 3);
+    _additionalYouthPrice = _asDouble(rules['additional_youth_price'], 0);
+    _senderChoice =
+        setup['communication_sender_choice']?.toString() ?? 'club_name';
+    _replyToChoice =
+        setup['communication_reply_to_choice']?.toString() ?? 'club_email';
+    _communicationSenderName.text =
+        setup['communication_sender_name']?.toString() ?? '';
+    _communicationReplyToEmail.text =
+        setup['communication_reply_to_email']?.toString() ?? '';
     _memberImport = imports['membership_roster'] == true;
     _sweepstakesImport = imports['sweepstakes_archive'] == true;
     final savedOfficers = answers['officers'] as List? ?? const [];
@@ -157,6 +246,14 @@ class _ClubOnboardingInviteScreenState
     });
     _ensureStandardOfficers();
   }
+
+  int _asInt(dynamic value, int fallback) => value is num
+      ? value.toInt()
+      : int.tryParse(value?.toString() ?? '') ?? fallback;
+
+  double _asDouble(dynamic value, double fallback) => value is num
+      ? value.toDouble()
+      : double.tryParse(value?.toString() ?? '') ?? fallback;
 
   bool _hasPurchasedAddOn(String addOnKey) {
     final values = _purchasedEntitlements['addons'] as List? ?? const [];
@@ -220,20 +317,37 @@ class _ClubOnboardingInviteScreenState
     'club': {
       'name': _clubName.text.trim(),
       'short_name': _shortName.text.trim(),
+      'type': _clubType,
+      'species_scope': _speciesScope,
+      'description': _description.text.trim(),
+      'logo_url': _logoUrl.text.trim(),
+      'branding': {
+        'primary_color': _brandPrimaryColor.text.trim(),
+        'secondary_color': _brandSecondaryColor.text.trim(),
+      },
       'website_url': _website.text.trim(),
       'contact_name': _contactName.text.trim(),
-      'contact_email': _email,
+      'contact_email': _contactEmail.text.trim(),
       'contact_phone': _contactPhone.text.trim(),
-      'address': _address.text.trim(),
+      'address_line1': _addressLine1.text.trim(),
+      'address_line2': _addressLine2.text.trim(),
       'city': _city.text.trim(),
       'state': _state.text.trim(),
       'postal_code': _postalCode.text.trim(),
       'country': 'US',
+      'public_profile': _publicProfile,
+      'public_events': _publicEvents,
+      'public_documents': _publicDocuments,
+      'public_sweepstakes': _publicSweepstakes,
     },
     'treasurer': {
       'name': _treasurerName.text.trim(),
       'email': _treasurerEmail.text.trim(),
-      'address': _treasurerAddress.text.trim(),
+      'address_line1': _treasurerAddressLine1.text.trim(),
+      'address_line2': _treasurerAddressLine2.text.trim(),
+      'city': _treasurerCity.text.trim(),
+      'state': _treasurerState.text.trim(),
+      'postal_code': _treasurerPostalCode.text.trim(),
     },
     'officers': _enteredOfficers.map((officer) => officer.toJson()).toList(),
     'setup': {
@@ -245,6 +359,32 @@ class _ClubOnboardingInviteScreenState
       'mailed_checks': _mailedChecks,
       'payment_provider': _paymentProvider,
       'paypal_requested': _paymentProvider == 'paypal',
+      'communication_sender_choice': _senderChoice,
+      'communication_sender_name': _senderChoice == 'custom'
+          ? _communicationSenderName.text.trim()
+          : _senderChoice == 'contact_name'
+          ? _contactName.text.trim()
+          : _shortName.text.trim().isEmpty
+          ? _clubName.text.trim()
+          : _shortName.text.trim(),
+      'communication_reply_to_choice': _replyToChoice,
+      'communication_reply_to_email': _replyToChoice == 'custom'
+          ? _communicationReplyToEmail.text.trim()
+          : _replyToChoice == 'contact_email'
+          ? (_contactEmail.text.trim().isEmpty
+                ? _email
+                : _contactEmail.text.trim())
+          : _email,
+      'membership_rules': {
+        'require_arba_number': _requireArbaNumber,
+        'requires_approval': _requireMembershipApproval,
+        'allow_auto_renew': _allowAutoRenew,
+        'adult_minimum_age': _adultMinimumAge,
+        'youth_maximum_age': _youthMaximumAge,
+        'family_included_adults': _familyIncludedAdults,
+        'family_included_youth': _familyIncludedYouth,
+        'additional_youth_price': _additionalYouthPrice,
+      },
       'membership_types': const [
         {'name': 'Individual', 'price': 10},
         {'name': 'Family', 'price': 15},
@@ -295,6 +435,143 @@ class _ClubOnboardingInviteScreenState
       if (_sweepstakesImport) 'Sweepstakes reports',
     ];
     return items.isEmpty ? 'None planned' : items.join(', ');
+  }
+
+  Future<void> _pickRoster() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv'],
+      withData: true,
+    );
+    if (picked == null || picked.files.single.bytes == null) return;
+    final file = picked.files.single;
+    try {
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      final parsed = _parseCsv(String.fromCharCodes(file.bytes!));
+      if (parsed.length < 2)
+        throw Exception('The CSV needs a header row and at least one member.');
+      final headers = parsed.first.map((cell) => cell.trim()).toList();
+      final rows = <Map<String, dynamic>>[];
+      for (var index = 1; index < parsed.length; index++) {
+        final source = <String, String>{};
+        for (var column = 0; column < headers.length; column++) {
+          source[headers[column]] = column < parsed[index].length
+              ? parsed[index][column].trim()
+              : '';
+        }
+        rows.add(_normalizeRosterRow(source, index + 1));
+      }
+      final result = await _supabase.rpc(
+        'save_club_onboarding_roster_preview',
+        params: {
+          'p_token': widget.token,
+          'p_file_name': file.name,
+          'p_headers': headers,
+          'p_rows': rows,
+        },
+      );
+      if (mounted)
+        setState(() {
+          _memberImport = true;
+          _rosterPreview = Map<String, dynamic>.from(result as Map);
+        });
+    } catch (error) {
+      if (mounted)
+        setState(() => _error = 'Unable to prepare roster preview: $error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  List<List<String>> _parseCsv(String content) {
+    final rows = <List<String>>[];
+    var row = <String>[];
+    var cell = StringBuffer();
+    var quoted = false;
+    for (var i = 0; i < content.length; i++) {
+      final char = content[i];
+      if (char == '"') {
+        if (quoted && i + 1 < content.length && content[i + 1] == '"') {
+          cell.write('"');
+          i++;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (char == ',' && !quoted) {
+        row.add(cell.toString());
+        cell = StringBuffer();
+      } else if ((char == '\n' || char == '\r') && !quoted) {
+        if (char == '\r' && i + 1 < content.length && content[i + 1] == '\n')
+          i++;
+        row.add(cell.toString());
+        cell = StringBuffer();
+        if (row.any((value) => value.trim().isNotEmpty)) rows.add(row);
+        row = <String>[];
+      } else {
+        cell.write(char);
+      }
+    }
+    row.add(cell.toString());
+    if (row.any((value) => value.trim().isNotEmpty)) rows.add(row);
+    return rows;
+  }
+
+  Map<String, dynamic> _normalizeRosterRow(
+    Map<String, String> source,
+    int rowNumber,
+  ) {
+    String find(List<String> names) {
+      for (final name in names) {
+        final match = source.entries
+            .where(
+              (entry) =>
+                  entry.key.toLowerCase().replaceAll(
+                    RegExp(r'[^a-z0-9]'),
+                    '',
+                  ) ==
+                  name,
+            )
+            .toList();
+        if (match.isNotEmpty && match.first.value.isNotEmpty)
+          return match.first.value;
+      }
+      return '';
+    }
+
+    final fullName = find(['name', 'fullname', 'membername']);
+    var first = find(['firstname', 'first']);
+    var last = find(['lastname', 'last', 'surname']);
+    if (first.isEmpty && last.isEmpty && fullName.isNotEmpty) {
+      final bits = fullName.split(RegExp(r'\s+'));
+      first = bits.first;
+      last = bits.skip(1).join(' ');
+    }
+    final email = find(['email', 'emailaddress']);
+    final type = find(['membershiptype', 'membertype', 'type', 'membership']);
+    final errors = <String>[];
+    if (first.isEmpty && last.isEmpty) errors.add('Missing member name');
+    if (email.isNotEmpty && !email.contains('@'))
+      errors.add('Email address looks incomplete');
+    return {
+      'row_number': rowNumber,
+      'source_row': source,
+      'proposed_member': {
+        'first_name': first,
+        'last_name': last,
+        'email': email,
+        'phone': find(['phone', 'phonenumber', 'mobile']),
+        'address_line1': find(['address', 'address1', 'street']),
+        'city': find(['city']),
+        'state': find(['state', 'province']),
+        'postal_code': find(['zip', 'zipcode', 'postalcode']),
+        'membership_type': type.isEmpty ? 'Needs review' : type,
+        'household': find(['household', 'family', 'familyname']),
+      },
+      'errors': errors,
+    };
   }
 
   Future<void> _submit() async {
@@ -432,6 +709,34 @@ class _ClubOnboardingInviteScreenState
           labelText: 'Short name / abbreviation',
         ),
       ),
+      DropdownButtonFormField<String>(
+        initialValue: _clubType,
+        decoration: const InputDecoration(labelText: 'Club type *'),
+        items: const [
+          DropdownMenuItem(value: 'local', child: Text('Local club')),
+          DropdownMenuItem(value: 'state', child: Text('State club')),
+          DropdownMenuItem(value: 'national', child: Text('National club')),
+          DropdownMenuItem(value: 'specialty', child: Text('Specialty club')),
+        ],
+        onChanged: (value) => setState(() => _clubType = value ?? 'local'),
+      ),
+      DropdownButtonFormField<String>(
+        initialValue: _speciesScope,
+        decoration: const InputDecoration(labelText: 'Species scope *'),
+        items: const [
+          DropdownMenuItem(value: 'rabbit', child: Text('Rabbit')),
+          DropdownMenuItem(value: 'cavy', child: Text('Cavy')),
+          DropdownMenuItem(value: 'both', child: Text('Rabbit & Cavy')),
+        ],
+        onChanged: (value) => setState(() => _speciesScope = value ?? 'both'),
+      ),
+      TextField(
+        controller: _description,
+        minLines: 2,
+        maxLines: 4,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(labelText: 'Club description'),
+      ),
       TextField(
         controller: _website,
         autofillHints: const [AutofillHints.url],
@@ -439,6 +744,37 @@ class _ClubOnboardingInviteScreenState
         textInputAction: TextInputAction.next,
         onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(labelText: 'Website URL'),
+      ),
+      TextField(
+        controller: _logoUrl,
+        autofillHints: const [AutofillHints.url],
+        keyboardType: TextInputType.url,
+        decoration: const InputDecoration(
+          labelText: 'Logo URL (optional)',
+          helperText:
+              'You can also replace this with an uploaded logo after activation.',
+        ),
+      ),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _brandPrimaryColor,
+              decoration: const InputDecoration(
+                labelText: 'Primary brand color',
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _brandSecondaryColor,
+              decoration: const InputDecoration(
+                labelText: 'Secondary brand color',
+              ),
+            ),
+          ),
+        ],
       ),
       TextField(
         controller: _contactName,
@@ -449,6 +785,18 @@ class _ClubOnboardingInviteScreenState
         decoration: const InputDecoration(labelText: 'Primary contact name'),
       ),
       TextField(
+        controller: _contactEmail,
+        autofillHints: const [AutofillHints.email],
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
+        decoration: const InputDecoration(
+          labelText: 'Primary contact email',
+          helperText:
+              'This may be different from the shared club account email.',
+        ),
+      ),
+      TextField(
         controller: _contactPhone,
         autofillHints: const [AutofillHints.telephoneNumber],
         keyboardType: TextInputType.phone,
@@ -457,12 +805,22 @@ class _ClubOnboardingInviteScreenState
         decoration: const InputDecoration(labelText: 'Contact phone'),
       ),
       TextField(
-        controller: _address,
+        controller: _addressLine1,
         autofillHints: const [AutofillHints.streetAddressLine1],
         textCapitalization: TextCapitalization.words,
         textInputAction: TextInputAction.next,
         onEditingComplete: () => FocusScope.of(context).nextFocus(),
-        decoration: const InputDecoration(labelText: 'Mailing address'),
+        decoration: const InputDecoration(
+          labelText: 'Mailing address line 1 *',
+        ),
+      ),
+      TextField(
+        controller: _addressLine2,
+        autofillHints: const [AutofillHints.streetAddressLine2],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
+        decoration: const InputDecoration(labelText: 'Mailing address line 2'),
       ),
       Row(
         children: [
@@ -509,6 +867,35 @@ class _ClubOnboardingInviteScreenState
           ),
         ],
       ),
+      const SizedBox(height: 4),
+      const Text(
+        'Public visibility',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _publicProfile,
+        onChanged: (value) => setState(() => _publicProfile = value),
+        title: const Text('Show a public club profile'),
+      ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _publicEvents,
+        onChanged: (value) => setState(() => _publicEvents = value),
+        title: const Text('Show public events'),
+      ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _publicDocuments,
+        onChanged: (value) => setState(() => _publicDocuments = value),
+        title: const Text('Allow public documents'),
+      ),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _publicSweepstakes,
+        onChanged: (value) => setState(() => _publicSweepstakes = value),
+        title: const Text('Show public sweepstakes results'),
+      ),
     ],
   );
 
@@ -534,14 +921,63 @@ class _ClubOnboardingInviteScreenState
         decoration: const InputDecoration(labelText: 'Treasurer email'),
       ),
       TextField(
-        controller: _treasurerAddress,
-        autofillHints: const [AutofillHints.fullStreetAddress],
+        controller: _treasurerAddressLine1,
+        autofillHints: const [AutofillHints.streetAddressLine1],
         textCapitalization: TextCapitalization.words,
         textInputAction: TextInputAction.next,
         onEditingComplete: () => FocusScope.of(context).nextFocus(),
         decoration: const InputDecoration(
-          labelText: 'Treasurer / check-payment address',
+          labelText: 'Treasurer / check-payment address line 1',
         ),
+      ),
+      TextField(
+        controller: _treasurerAddressLine2,
+        autofillHints: const [AutofillHints.streetAddressLine2],
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
+        decoration: const InputDecoration(labelText: 'Address line 2'),
+      ),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _treasurerCity,
+              autofillHints: const [AutofillHints.addressCity],
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'City'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              initialValue:
+                  _usStates.any((item) => item.code == _treasurerState.text)
+                  ? _treasurerState.text
+                  : null,
+              decoration: const InputDecoration(labelText: 'State'),
+              isExpanded: true,
+              items: [
+                for (final state in _usStates)
+                  DropdownMenuItem(
+                    value: state.code,
+                    child: Text('${state.code} — ${state.name}'),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _treasurerState.text = value);
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _treasurerPostalCode,
+              autofillHints: const [AutofillHints.postalCode],
+              decoration: const InputDecoration(labelText: 'ZIP / postal code'),
+            ),
+          ),
+        ],
       ),
       const SizedBox(height: 12),
       const Text(
@@ -619,6 +1055,91 @@ class _ClubOnboardingInviteScreenState
         ),
       ),
       const Divider(),
+      if (_membership) ...[
+        Text(
+          'Membership rules',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const Text(
+          'These default rules will be applied to your Individual, Family, and Youth plans before activation.',
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _requireArbaNumber,
+          onChanged: (value) => setState(() => _requireArbaNumber = value),
+          title: const Text('Require ARBA number'),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _requireMembershipApproval,
+          onChanged: (value) =>
+              setState(() => _requireMembershipApproval = value),
+          title: const Text('Require membership approval'),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _allowAutoRenew,
+          onChanged: (value) => setState(() => _allowAutoRenew = value),
+          title: const Text('Allow automatic renewal'),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _NumberField(
+                label: 'Individual minimum age',
+                value: _adultMinimumAge,
+                onChanged: (value) => setState(() => _adultMinimumAge = value),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _NumberField(
+                label: 'Youth maximum age',
+                value: _youthMaximumAge,
+                onChanged: (value) => setState(() => _youthMaximumAge = value),
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _NumberField(
+                label: 'Family included adults',
+                value: _familyIncludedAdults,
+                onChanged: (value) =>
+                    setState(() => _familyIncludedAdults = value),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _NumberField(
+                label: 'Family included youth',
+                value: _familyIncludedYouth,
+                onChanged: (value) =>
+                    setState(() => _familyIncludedYouth = value),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                initialValue: _additionalYouthPrice.toStringAsFixed(2),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Extra youth fee (USD)',
+                ),
+                onChanged: (value) =>
+                    setState(() => _additionalYouthPrice = _asDouble(value, 0)),
+              ),
+            ),
+          ],
+        ),
+        const Divider(),
+      ],
       SwitchListTile(
         value: _onlinePayments,
         onChanged: _membership
@@ -670,6 +1191,69 @@ class _ClubOnboardingInviteScreenState
           ),
         ),
       ),
+      if (_hasPurchasedAddOn('email')) ...[
+        const Divider(),
+        Text(
+          'Communication defaults',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        DropdownButtonFormField<String>(
+          initialValue: _senderChoice,
+          decoration: const InputDecoration(labelText: 'Email sender name'),
+          items: const [
+            DropdownMenuItem(
+              value: 'club_name',
+              child: Text('Club short name'),
+            ),
+            DropdownMenuItem(
+              value: 'contact_name',
+              child: Text('Primary contact name'),
+            ),
+            DropdownMenuItem(
+              value: 'custom',
+              child: Text('Custom sender name'),
+            ),
+          ],
+          onChanged: (value) =>
+              setState(() => _senderChoice = value ?? 'club_name'),
+        ),
+        if (_senderChoice == 'custom')
+          TextField(
+            controller: _communicationSenderName,
+            decoration: const InputDecoration(labelText: 'Custom sender name'),
+          ),
+        DropdownButtonFormField<String>(
+          initialValue: _replyToChoice,
+          decoration: const InputDecoration(labelText: 'Reply-to email'),
+          items: const [
+            DropdownMenuItem(
+              value: 'club_email',
+              child: Text('Shared club email'),
+            ),
+            DropdownMenuItem(
+              value: 'contact_email',
+              child: Text('Primary contact email'),
+            ),
+            DropdownMenuItem(
+              value: 'custom',
+              child: Text('Custom reply-to email'),
+            ),
+          ],
+          onChanged: (value) =>
+              setState(() => _replyToChoice = value ?? 'club_email'),
+        ),
+        if (_replyToChoice == 'custom')
+          TextField(
+            controller: _communicationReplyToEmail,
+            autofillHints: const [AutofillHints.email],
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+              labelText: 'Custom reply-to email',
+            ),
+          ),
+      ],
     ],
   );
 
@@ -857,11 +1441,36 @@ class _ClubOnboardingInviteScreenState
             'Each report package remains in review until your show rules and parsed results are confirmed.',
           ),
         ),
+      if (_memberImport)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: _rosterPreview?['has_preview'] == true
+                ? _RosterPreviewSummary(
+                    preview: _rosterPreview!,
+                    showRows: true,
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Upload your membership roster to create the review preview.',
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _saving ? null : _pickRoster,
+                        icon: const Icon(Icons.upload_file_outlined),
+                        label: const Text('Upload CSV roster'),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
       const Card(
         child: Padding(
           padding: EdgeInsets.all(14),
           child: Text(
-            'Uploads are enabled after your club draft is approved so every file can be attached to the correct club workspace and reviewed safely.',
+            'Roster uploads are staged only for review. Nothing is imported until RingMaster and your club confirm the resulting records.',
           ),
         ),
       ),
@@ -880,6 +1489,12 @@ class _ClubOnboardingInviteScreenState
             : _clubName.text.trim(),
       ),
       _ReviewLine('Club account email', _email),
+      _ReviewLine('Club type', _clubType),
+      _ReviewLine('Species scope', _speciesScope),
+      _ReviewLine(
+        'Public profile',
+        _publicProfile ? 'Enabled' : 'Private until enabled later',
+      ),
       _ReviewLine(
         'Officers',
         _enteredOfficers.isEmpty
@@ -898,9 +1513,63 @@ class _ClubOnboardingInviteScreenState
             ? 'Online payments not enabled yet'
             : _paymentProvider,
       ),
+      if (_membership)
+        _ReviewLine(
+          'Membership rules',
+          '${_requireArbaNumber ? 'ARBA number required' : 'ARBA number optional'} · ${_requireMembershipApproval ? 'approval required' : 'automatic approval'} · ${_allowAutoRenew ? 'auto-renew enabled' : 'manual renewal'}',
+        ),
       _ReviewLine('Imports', _importsSummary),
     ],
   );
+}
+
+class _RosterPreviewSummary extends StatelessWidget {
+  const _RosterPreviewSummary({required this.preview, required this.showRows});
+  final Map<String, dynamic> preview;
+  final bool showRows;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = (preview['rows'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Roster preview: ${preview['file_name']}',
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${preview['total_rows'] ?? 0} rows · ${preview['valid_rows'] ?? 0} ready · ${preview['error_rows'] ?? 0} need attention',
+        ),
+        if (showRows && rows.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text(
+            'First 10 proposed members',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          ...rows.take(10).map((row) {
+            final member = Map<String, dynamic>.from(
+              row['proposed_member'] as Map? ?? const {},
+            );
+            final errors = (row['errors'] as List? ?? const []).join(' · ');
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Row ${row['row_number']}: ${[member['first_name'], member['last_name']].whereType<String>().where((value) => value.isNotEmpty).join(' ')}${member['email']?.toString().isEmpty == false ? ' · ${member['email']}' : ''}${errors.isNotEmpty ? ' — $errors' : ''}',
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
 }
 
 class _StepContent extends StatelessWidget {
@@ -999,6 +1668,29 @@ class _ReviewLine extends StatelessWidget {
     title: Text(label),
     subtitle: Text(value),
     leading: const Icon(Icons.check_circle_outline),
+  );
+}
+
+class _NumberField extends StatelessWidget {
+  const _NumberField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    initialValue: '$value',
+    keyboardType: TextInputType.number,
+    decoration: InputDecoration(labelText: label),
+    onChanged: (text) {
+      final parsed = int.tryParse(text);
+      if (parsed != null && parsed >= 0) onChanged(parsed);
+    },
   );
 }
 
