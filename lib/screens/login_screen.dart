@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../theme/app_theme.dart';
+import 'clubs/onboarding/club_onboarding_invite_screen.dart';
 import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_screen.dart';
 import '../widgets/rm_widgets.dart';
@@ -109,8 +110,13 @@ class _LoginScreenState extends State<LoginScreen>
 
     _navigatingHome = true;
 
+    final onboardingToken = Uri.base.queryParameters['onboarding']?.trim();
+    final destination = onboardingToken != null && onboardingToken.isNotEmpty
+        ? ClubOnboardingInviteScreen(token: onboardingToken)
+        : const HomeScreen();
+
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const HomeScreen()),
+      MaterialPageRoute<void>(builder: (_) => destination),
       (_) => false,
     );
   }
