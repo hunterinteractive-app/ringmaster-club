@@ -29,6 +29,8 @@ class _ClubOnboardingInviteScreenState
   final _postalCode = TextEditingController();
   final _treasurerName = TextEditingController();
   final _treasurerEmail = TextEditingController();
+  final _treasurerPhone = TextEditingController();
+  final _sanctionCheckPayee = TextEditingController();
   final _treasurerAddressLine1 = TextEditingController();
   final _treasurerAddressLine2 = TextEditingController();
   final _treasurerCity = TextEditingController();
@@ -41,6 +43,7 @@ class _ClubOnboardingInviteScreenState
   final _communicationSenderName = TextEditingController();
   final _communicationReplyToEmail = TextEditingController();
   final _officers = <_OfficerDraft>[];
+  final _sanctionTypes = <_OnboardingSanctionTypeDraft>[];
 
   bool _loading = true;
   bool _saving = false;
@@ -57,6 +60,7 @@ class _ClubOnboardingInviteScreenState
   bool _sweepstakes = false;
   bool _onlinePayments = false;
   bool _mailedChecks = true;
+  bool _sanctionCheckPayments = false;
   bool _memberImport = false;
   bool _sweepstakesImport = false;
   String _paymentProvider = 'not_ready';
@@ -100,6 +104,8 @@ class _ClubOnboardingInviteScreenState
       _postalCode,
       _treasurerName,
       _treasurerEmail,
+      _treasurerPhone,
+      _sanctionCheckPayee,
       _treasurerAddressLine1,
       _treasurerAddressLine2,
       _treasurerCity,
@@ -116,6 +122,9 @@ class _ClubOnboardingInviteScreenState
     }
     for (final officer in _officers) {
       officer.dispose();
+    }
+    for (final sanctionType in _sanctionTypes) {
+      sanctionType.dispose();
     }
     super.dispose();
   }
@@ -184,6 +193,8 @@ class _ClubOnboardingInviteScreenState
     _postalCode.text = club['postal_code']?.toString() ?? '';
     _treasurerName.text = treasurer['name']?.toString() ?? '';
     _treasurerEmail.text = treasurer['email']?.toString() ?? '';
+    _treasurerPhone.text = treasurer['phone']?.toString() ?? '';
+    _sanctionCheckPayee.text = setup['sanction_check_payee']?.toString() ?? '';
     _treasurerAddressLine1.text =
         treasurer['address_line1']?.toString() ??
         treasurer['address']?.toString() ??
@@ -209,6 +220,7 @@ class _ClubOnboardingInviteScreenState
     _sweepstakes = _hasPurchasedAddOn('sweepstakes');
     _onlinePayments = setup['online_payments'] == true;
     _mailedChecks = setup['mailed_checks'] != false;
+    _sanctionCheckPayments = setup['sanction_check_payments'] == true;
     _paymentProvider = setup['payment_provider']?.toString() ?? 'not_ready';
     final rules = Map<String, dynamic>.from(
       setup['membership_rules'] as Map? ?? const {},
@@ -229,6 +241,12 @@ class _ClubOnboardingInviteScreenState
         setup['communication_sender_name']?.toString() ?? '';
     _communicationReplyToEmail.text =
         setup['communication_reply_to_email']?.toString() ?? '';
+    for (final item
+        in (setup['sanction_types'] as List? ?? const []).whereType<Map>()) {
+      _sanctionTypes.add(
+        _OnboardingSanctionTypeDraft.fromJson(Map<String, dynamic>.from(item)),
+      );
+    }
     _memberImport = imports['membership_roster'] == true;
     _sweepstakesImport = imports['sweepstakes_archive'] == true;
     final savedOfficers = answers['officers'] as List? ?? const [];
@@ -315,6 +333,12 @@ class _ClubOnboardingInviteScreenState
     ),
   );
 
+  void _addSanctionType() =>
+      setState(() => _sanctionTypes.add(_OnboardingSanctionTypeDraft()));
+
+  bool get _hasValidSanctionTypes =>
+      _sanctionTypes.isNotEmpty && _sanctionTypes.every((type) => type.isValid);
+
   Map<String, dynamic> get _answers => {
     'club': {
       'name': _clubName.text.trim(),
@@ -345,6 +369,7 @@ class _ClubOnboardingInviteScreenState
     'treasurer': {
       'name': _treasurerName.text.trim(),
       'email': _treasurerEmail.text.trim(),
+      'phone': _treasurerPhone.text.trim(),
       'address_line1': _treasurerAddressLine1.text.trim(),
       'address_line2': _treasurerAddressLine2.text.trim(),
       'city': _treasurerCity.text.trim(),
@@ -359,6 +384,8 @@ class _ClubOnboardingInviteScreenState
       'sweepstakes': _sweepstakes,
       'online_payments': _onlinePayments,
       'mailed_checks': _mailedChecks,
+      'sanction_check_payments': _sanctionCheckPayments,
+      'sanction_check_payee': _sanctionCheckPayee.text.trim(),
       'payment_provider': _paymentProvider,
       'paypal_requested': _paymentProvider == 'paypal',
       'communication_sender_choice': _senderChoice,
@@ -392,6 +419,9 @@ class _ClubOnboardingInviteScreenState
         {'name': 'Family', 'price': 15},
         {'name': 'Youth', 'price': 5},
       ],
+      'sanction_types': _sanctionTypes
+          .map((sanctionType) => sanctionType.toJson())
+          .toList(),
     },
     'imports': {
       'membership_roster': _memberImport,
@@ -404,6 +434,13 @@ class _ClubOnboardingInviteScreenState
     if (_saving) return;
     if (_step == 0 && _clubName.text.trim().isEmpty) {
       setState(() => _error = 'Enter the club name before continuing.');
+      return;
+    }
+    if (_step == 2 && _sanctions && !_hasValidSanctionTypes) {
+      setState(
+        () => _error =
+            'Add at least one sanction type with a name and non-negative price before continuing.',
+      );
       return;
     }
     setState(() {
@@ -951,6 +988,14 @@ class _ClubOnboardingInviteScreenState
         decoration: const InputDecoration(labelText: 'Treasurer email'),
       ),
       TextField(
+        controller: _treasurerPhone,
+        autofillHints: const [AutofillHints.telephoneNumber],
+        keyboardType: TextInputType.phone,
+        textInputAction: TextInputAction.next,
+        onEditingComplete: () => FocusScope.of(context).nextFocus(),
+        decoration: const InputDecoration(labelText: 'Treasurer phone'),
+      ),
+      TextField(
         controller: _treasurerAddressLine1,
         autofillHints: const [AutofillHints.streetAddressLine1],
         textCapitalization: TextCapitalization.words,
@@ -1167,6 +1212,61 @@ class _ClubOnboardingInviteScreenState
               ),
             ),
           ],
+        ),
+        const Divider(),
+      ],
+      if (_sanctions) ...[
+        Text(
+          'Sanction options and pricing',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Add every sanction option applicants can request. The scope determines which ARBA sanction-number fields applicants see.',
+        ),
+        const SizedBox(height: 10),
+        if (_sanctionTypes.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(14),
+              child: Text(
+                'No sanction options have been added yet. Add at least one before continuing.',
+              ),
+            ),
+          ),
+        for (final sanctionType in _sanctionTypes)
+          _OnboardingSanctionTypeCard(
+            sanctionType: sanctionType,
+            onChanged: () => setState(() {}),
+            onRemove: () => setState(() {
+              sanctionType.dispose();
+              _sanctionTypes.remove(sanctionType);
+            }),
+          ),
+        OutlinedButton.icon(
+          onPressed: _addSanctionType,
+          icon: const Icon(Icons.add_circle_outline),
+          label: const Text('Add sanction type'),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _sanctionCheckPayments,
+          onChanged: (value) => setState(() => _sanctionCheckPayments = value),
+          title: const Text('Accept mailed checks for sanction requests'),
+          subtitle: const Text(
+            'Applicants will be shown the treasurer/check-payment address entered above.',
+          ),
+        ),
+        TextField(
+          controller: _sanctionCheckPayee,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Make sanction checks payable to',
+            helperText: 'Leave blank to make checks payable to the treasurer.',
+          ),
         ),
         const Divider(),
       ],
@@ -1548,6 +1648,13 @@ class _ClubOnboardingInviteScreenState
           'Membership rules',
           '${_requireArbaNumber ? 'ARBA number required' : 'ARBA number optional'} · ${_requireMembershipApproval ? 'approval required' : 'automatic approval'} · ${_allowAutoRenew ? 'auto-renew enabled' : 'manual renewal'}',
         ),
+      if (_sanctions)
+        _ReviewLine(
+          'Sanction options',
+          _sanctionTypes.isEmpty
+              ? 'No sanction options added'
+              : '${_sanctionTypes.length} configured${_sanctionCheckPayments ? ' · mailed checks accepted' : ''}',
+        ),
       _ReviewLine('Imports', _importsSummary),
     ],
   );
@@ -1815,6 +1922,224 @@ class _OfficerDraft {
     email.dispose();
     title.dispose();
   }
+}
+
+class _OnboardingSanctionTypeDraft {
+  _OnboardingSanctionTypeDraft({
+    String name = '',
+    String description = '',
+    String basePrice = '0.00',
+    String currency = 'USD',
+    this.sanctionScope = 'open_youth_bundle',
+    String includedOpenCount = '1',
+    String includedYouthCount = '1',
+  }) : name = TextEditingController(text: name),
+       description = TextEditingController(text: description),
+       basePrice = TextEditingController(text: basePrice),
+       currency = TextEditingController(text: currency),
+       includedOpenCount = TextEditingController(text: includedOpenCount),
+       includedYouthCount = TextEditingController(text: includedYouthCount);
+
+  final TextEditingController name;
+  final TextEditingController description;
+  final TextEditingController basePrice;
+  final TextEditingController currency;
+  final TextEditingController includedOpenCount;
+  final TextEditingController includedYouthCount;
+  String sanctionScope;
+
+  factory _OnboardingSanctionTypeDraft.fromJson(Map<String, dynamic> json) =>
+      _OnboardingSanctionTypeDraft(
+        name: json['name']?.toString() ?? '',
+        description: json['description']?.toString() ?? '',
+        basePrice: json['base_price']?.toString() ?? '0.00',
+        currency: json['currency']?.toString().toUpperCase() ?? 'USD',
+        sanctionScope:
+            json['sanction_scope']?.toString() ?? 'open_youth_bundle',
+        includedOpenCount: json['included_open_count']?.toString() ?? '1',
+        includedYouthCount: json['included_youth_count']?.toString() ?? '1',
+      );
+
+  bool get isValid {
+    final price = double.tryParse(basePrice.text.trim());
+    final openCount = int.tryParse(includedOpenCount.text.trim());
+    final youthCount = int.tryParse(includedYouthCount.text.trim());
+    return name.text.trim().isNotEmpty &&
+        price != null &&
+        price >= 0 &&
+        openCount != null &&
+        openCount >= 0 &&
+        youthCount != null &&
+        youthCount >= 0 &&
+        currency.text.trim().isNotEmpty;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'name': name.text.trim(),
+    'description': description.text.trim(),
+    'sanction_scope': sanctionScope,
+    'base_price': double.tryParse(basePrice.text.trim()) ?? 0,
+    'currency': currency.text.trim().toUpperCase(),
+    'is_bundle': sanctionScope == 'open_youth_bundle',
+    'included_open_count': int.tryParse(includedOpenCount.text.trim()) ?? 0,
+    'included_youth_count': int.tryParse(includedYouthCount.text.trim()) ?? 0,
+  };
+
+  void dispose() {
+    name.dispose();
+    description.dispose();
+    basePrice.dispose();
+    currency.dispose();
+    includedOpenCount.dispose();
+    includedYouthCount.dispose();
+  }
+}
+
+class _OnboardingSanctionTypeCard extends StatelessWidget {
+  const _OnboardingSanctionTypeCard({
+    required this.sanctionType,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final _OnboardingSanctionTypeDraft sanctionType;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Sanction type',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: onRemove,
+                tooltip: 'Remove sanction type',
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+            ],
+          ),
+          TextField(
+            controller: sanctionType.name,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              hintText: 'Open & Youth sanction',
+            ),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: sanctionType.description,
+            minLines: 1,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Description (optional)',
+            ),
+            onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: sanctionType.sanctionScope,
+            decoration: const InputDecoration(labelText: 'Sanction scope'),
+            items: const [
+              DropdownMenuItem(value: 'open', child: Text('Open')),
+              DropdownMenuItem(value: 'youth', child: Text('Youth')),
+              DropdownMenuItem(
+                value: 'open_youth_bundle',
+                child: Text('Open & Youth bundle'),
+              ),
+              DropdownMenuItem(value: 'other', child: Text('Other')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              sanctionType.sanctionScope = value;
+              if (value == 'open' &&
+                  sanctionType.includedOpenCount.text == '0') {
+                sanctionType.includedOpenCount.text = '1';
+              }
+              if (value == 'youth' &&
+                  sanctionType.includedYouthCount.text == '0') {
+                sanctionType.includedYouthCount.text = '1';
+              }
+              if (value == 'open_youth_bundle') {
+                if (sanctionType.includedOpenCount.text == '0') {
+                  sanctionType.includedOpenCount.text = '1';
+                }
+                if (sanctionType.includedYouthCount.text == '0') {
+                  sanctionType.includedYouthCount.text = '1';
+                }
+              }
+              onChanged();
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: sanctionType.basePrice,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Fee',
+                    prefixText: r'$ ',
+                  ),
+                  onChanged: (_) => onChanged(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: sanctionType.currency,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(labelText: 'Currency'),
+                  onChanged: (_) => onChanged(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: sanctionType.includedOpenCount,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Included Open sanctions',
+                  ),
+                  onChanged: (_) => onChanged(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: sanctionType.includedYouthCount,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Included Youth sanctions',
+                  ),
+                  onChanged: (_) => onChanged(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _OfficerCard extends StatelessWidget {

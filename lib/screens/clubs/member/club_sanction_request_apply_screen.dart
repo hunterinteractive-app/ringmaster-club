@@ -57,6 +57,7 @@ class _ClubSanctionRequestApplyScreenState
   String? _errorMessage;
   String? _successMessage;
   String? _treasurerName;
+  String? _sanctionCheckPayee;
   String? _treasurerAddressLine1;
   String? _treasurerAddressLine2;
   String? _treasurerCity;
@@ -113,6 +114,7 @@ class _ClubSanctionRequestApplyScreenState
           .select(
             'sanction_requests_addon_enabled,accepts_member_online_payments,'
             'allow_sanction_check_payments,treasurer_name,'
+            'sanction_check_payee,'
             'treasurer_address_line1,treasurer_address_line2,'
             'treasurer_city,treasurer_state,treasurer_zip',
           )
@@ -170,6 +172,9 @@ class _ClubSanctionRequestApplyScreenState
             : 'offline';
         _treasurerName = _emptyToNull(
           clubRow['treasurer_name']?.toString() ?? '',
+        );
+        _sanctionCheckPayee = _emptyToNull(
+          clubRow['sanction_check_payee']?.toString() ?? '',
         );
         _treasurerAddressLine1 = _emptyToNull(
           clubRow['treasurer_address_line1']?.toString() ?? '',
@@ -663,7 +668,7 @@ class _ClubSanctionRequestApplyScreenState
       'check_payment': {
         'selected': _isCheckPaymentSelected,
         'status': _isCheckPaymentSelected ? 'pending_check' : null,
-        'payable_to': _treasurerName,
+        'payable_to': _sanctionCheckPayee ?? _treasurerName,
         'mailing_address': _treasurerMailingLabel,
       },
     };
@@ -1154,6 +1159,12 @@ class _ClubSanctionRequestApplyScreenState
                 'Please mail your check for ${_moneyLabel(_checkoutAmountCents, _selectedSanctionType?.currency ?? 'USD')} to:',
               ),
               const SizedBox(height: 12),
+              if ((_sanctionCheckPayee ?? _treasurerName)?.isNotEmpty == true)
+                Text(
+                  'Make checks payable to: ${_sanctionCheckPayee ?? _treasurerName}',
+                ),
+              if ((_sanctionCheckPayee ?? _treasurerName)?.isNotEmpty == true)
+                const SizedBox(height: 12),
               if (mailingLabel.isNotEmpty)
                 SelectableText(
                   mailingLabel,

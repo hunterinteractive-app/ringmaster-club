@@ -10,10 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/clubs/club_summary.dart';
 
 class ClubSettingsScreen extends StatefulWidget {
-  const ClubSettingsScreen({
-    super.key,
-    required this.club,
-  });
+  const ClubSettingsScreen({super.key, required this.club});
 
   final ClubSummary club;
 
@@ -34,6 +31,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
   final _contactEmailController = TextEditingController();
   final _contactPhoneController = TextEditingController();
   final _treasurerNameController = TextEditingController();
+  final _sanctionCheckPayeeController = TextEditingController();
   final _treasurerEmailController = TextEditingController();
   final _treasurerPhoneController = TextEditingController();
   final _treasurerAddressLine1Controller = TextEditingController();
@@ -53,7 +51,8 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
   bool _isUploadingLogo = false;
   String? _errorMessage;
   String? _logoStorageBucket;
-  _ClubSettingsFeatureAccess _features = const _ClubSettingsFeatureAccess.base();
+  _ClubSettingsFeatureAccess _features =
+      const _ClubSettingsFeatureAccess.base();
 
   String _clubType = 'local';
   String _speciesScope = 'both';
@@ -81,6 +80,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     _contactEmailController.dispose();
     _contactPhoneController.dispose();
     _treasurerNameController.dispose();
+    _sanctionCheckPayeeController.dispose();
     _treasurerEmailController.dispose();
     _treasurerPhoneController.dispose();
     _treasurerAddressLine1Controller.dispose();
@@ -111,6 +111,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
             'website_url,mailing_address_line1,mailing_address_line2,'
             'mailing_city,mailing_state,mailing_postal_code,mailing_country,'
             'contact_name,contact_email,contact_phone,treasurer_name,'
+            'sanction_check_payee,'
             'treasurer_email,treasurer_phone,treasurer_address_line1,'
             'treasurer_address_line2,treasurer_city,treasurer_state,'
             'treasurer_zip,status,'
@@ -133,12 +134,15 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
       _contactEmailController.text = _text(row['contact_email']);
       _contactPhoneController.text = _text(row['contact_phone']);
       _treasurerNameController.text = _text(row['treasurer_name']);
+      _sanctionCheckPayeeController.text = _text(row['sanction_check_payee']);
       _treasurerEmailController.text = _text(row['treasurer_email']);
       _treasurerPhoneController.text = _text(row['treasurer_phone']);
-      _treasurerAddressLine1Controller.text =
-          _text(row['treasurer_address_line1']);
-      _treasurerAddressLine2Controller.text =
-          _text(row['treasurer_address_line2']);
+      _treasurerAddressLine1Controller.text = _text(
+        row['treasurer_address_line1'],
+      );
+      _treasurerAddressLine2Controller.text = _text(
+        row['treasurer_address_line2'],
+      );
       _treasurerCityController.text = _text(row['treasurer_city']);
       _treasurerStateController.text = _text(row['treasurer_state']);
       _treasurerZipController.text = _text(row['treasurer_zip']);
@@ -219,21 +223,21 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
 
       final extension = _fileExtension(file.name);
       final bucketName = await _provisionLogoStorageBucket();
-      final storagePath = 'logo-${DateTime.now().millisecondsSinceEpoch}$extension';
+      final storagePath =
+          'logo-${DateTime.now().millisecondsSinceEpoch}$extension';
       final contentType = _imageContentType(extension);
 
-      await _supabase.storage.from(bucketName).uploadBinary(
+      await _supabase.storage
+          .from(bucketName)
+          .uploadBinary(
             storagePath,
             Uint8List.fromList(bytes),
-            fileOptions: FileOptions(
-              contentType: contentType,
-              upsert: true,
-            ),
+            fileOptions: FileOptions(contentType: contentType, upsert: true),
           );
 
-      final publicUrl = _supabase.storage.from(bucketName).getPublicUrl(
-            storagePath,
-          );
+      final publicUrl = _supabase.storage
+          .from(bucketName)
+          .getPublicUrl(storagePath);
 
       if (!mounted) return;
       setState(() {
@@ -288,8 +292,6 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     return logoBucket;
   }
 
-
-
   String _fileExtension(String name) {
     final dotIndex = name.lastIndexOf('.');
     if (dotIndex < 0 || dotIndex == name.length - 1) return '.png';
@@ -336,10 +338,8 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
             'description': _nullIfBlank(_descriptionController.text),
             'logo_url': _nullIfBlank(_logoUrlController.text),
             'website_url': _nullIfBlank(_websiteController.text),
-            'mailing_address_line1':
-                _nullIfBlank(_addressLine1Controller.text),
-            'mailing_address_line2':
-                _nullIfBlank(_addressLine2Controller.text),
+            'mailing_address_line1': _nullIfBlank(_addressLine1Controller.text),
+            'mailing_address_line2': _nullIfBlank(_addressLine2Controller.text),
             'mailing_city': _nullIfBlank(_cityController.text),
             'mailing_state': _nullIfBlank(_stateController.text),
             'mailing_postal_code': _nullIfBlank(_postalCodeController.text),
@@ -350,12 +350,17 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
             'contact_email': _nullIfBlank(_contactEmailController.text),
             'contact_phone': _nullIfBlank(_contactPhoneController.text),
             'treasurer_name': _nullIfBlank(_treasurerNameController.text),
+            'sanction_check_payee': _nullIfBlank(
+              _sanctionCheckPayeeController.text,
+            ),
             'treasurer_email': _nullIfBlank(_treasurerEmailController.text),
             'treasurer_phone': _nullIfBlank(_treasurerPhoneController.text),
-            'treasurer_address_line1':
-                _nullIfBlank(_treasurerAddressLine1Controller.text),
-            'treasurer_address_line2':
-                _nullIfBlank(_treasurerAddressLine2Controller.text),
+            'treasurer_address_line1': _nullIfBlank(
+              _treasurerAddressLine1Controller.text,
+            ),
+            'treasurer_address_line2': _nullIfBlank(
+              _treasurerAddressLine2Controller.text,
+            ),
             'treasurer_city': _nullIfBlank(_treasurerCityController.text),
             'treasurer_state': _nullIfBlank(_treasurerStateController.text),
             'treasurer_zip': _nullIfBlank(_treasurerZipController.text),
@@ -371,9 +376,9 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Club settings saved.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Club settings saved.')));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -427,10 +432,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     }
 
     if (_errorMessage != null && _nameController.text.isEmpty) {
-      return _ErrorState(
-        message: _errorMessage!,
-        onRetry: _loadClub,
-      );
+      return _ErrorState(message: _errorMessage!, onRetry: _loadClub);
     }
 
     return Form(
@@ -598,8 +600,18 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
               TextFormField(
                 controller: _treasurerNameController,
                 decoration: const InputDecoration(
-                  labelText: 'Treasurer name / Payable to',
+                  labelText: 'Treasurer name',
                   helperText: 'Example: ISRBA Treasurer or Jane Smith',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _sanctionCheckPayeeController,
+                decoration: const InputDecoration(
+                  labelText: 'Make sanction checks payable to',
+                  helperText:
+                      'Leave blank to make checks payable to the treasurer.',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -778,8 +790,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                 value: _allowPublicProfile,
                 onChanged: _isSaving
                     ? null
-                    : (value) =>
-                        setState(() => _allowPublicProfile = value),
+                    : (value) => setState(() => _allowPublicProfile = value),
               ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
@@ -803,8 +814,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                 value: _allowPublicDocuments,
                 onChanged: _isSaving
                     ? null
-                    : (value) =>
-                        setState(() => _allowPublicDocuments = value),
+                    : (value) => setState(() => _allowPublicDocuments = value),
               ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
@@ -818,7 +828,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                 onChanged: _isSaving || !_features.sweepstakes
                     ? null
                     : (value) =>
-                        setState(() => _allowPublicSweepstakes = value),
+                          setState(() => _allowPublicSweepstakes = value),
               ),
             ],
           ),
@@ -899,10 +909,7 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.title,
-    required this.children,
-  });
+  const _SectionCard({required this.title, required this.children});
 
   final String title;
   final List<Widget> children;
@@ -917,9 +924,9 @@ class _SectionCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 16),
             ...children,
@@ -931,10 +938,7 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({
-    required this.message,
-    required this.onRetry,
-  });
+  const _ErrorState({required this.message, required this.onRetry});
 
   final String message;
   final VoidCallback onRetry;
@@ -954,8 +958,8 @@ class _ErrorState extends StatelessWidget {
               Text(
                 'Unable to load settings',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 10),
@@ -996,9 +1000,9 @@ class _LogoUploadField extends StatelessWidget {
       children: [
         Text(
           'Club Logo',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
         Material(
@@ -1026,10 +1030,7 @@ class _LogoUploadField extends StatelessWidget {
                           logoUrl,
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) =>
-                              const Icon(
-                            Icons.broken_image_outlined,
-                            size: 38,
-                          ),
+                              const Icon(Icons.broken_image_outlined, size: 38),
                         ),
                 ),
                 const SizedBox(width: 14),
@@ -1040,8 +1041,8 @@ class _LogoUploadField extends StatelessWidget {
                       Text(
                         logoUrl.isEmpty ? 'No logo uploaded' : 'Logo selected',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -1102,8 +1103,8 @@ class _ClubSettingsFeatureAccess {
   });
 
   const _ClubSettingsFeatureAccess.base()
-      : eventsMeetings = false,
-        sweepstakes = false;
+    : eventsMeetings = false,
+      sweepstakes = false;
 
   final bool eventsMeetings;
   final bool sweepstakes;
@@ -1144,8 +1145,8 @@ class _BaseSettingsAccessCard extends StatelessWidget {
                   Text(
                     'Included with Base Club Tools',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
@@ -1196,11 +1197,10 @@ class _SettingsFeatureChip extends StatelessWidget {
         size: 18,
       ),
       label: Text(label),
-      backgroundColor:
-          enabled ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-      side: BorderSide(
-        color: enabled ? scheme.primary : scheme.outlineVariant,
-      ),
+      backgroundColor: enabled
+          ? scheme.primaryContainer
+          : scheme.surfaceContainerHighest,
+      side: BorderSide(color: enabled ? scheme.primary : scheme.outlineVariant),
       visualDensity: VisualDensity.compact,
     );
   }
