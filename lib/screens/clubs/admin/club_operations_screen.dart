@@ -44,11 +44,12 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
         _loading = false;
       });
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
           _error = '$error';
         });
+      }
     }
   }
 
@@ -139,6 +140,15 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
               icon: const Icon(Icons.download_outlined),
               label: const Text('Download CSV'),
             ),
+          if (roster['has_preview'] == true)
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                _openRosterReview(draft, roster);
+              },
+              icon: const Icon(Icons.edit_note_outlined),
+              label: const Text('Review all rows'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -146,6 +156,19 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _openRosterReview(
+    Map<String, dynamic> draft,
+    Map<String, dynamic> roster,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          _RosterReviewDialog(draftId: draft['id'].toString(), roster: roster),
+    );
+    await _load();
   }
 
   Future<void> _downloadRoster(Map<String, dynamic> roster) async {
@@ -480,6 +503,163 @@ class _RosterPreviewSection extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RosterReviewDialog extends StatefulWidget {
+  const _RosterReviewDialog({required this.draftId, required this.roster});
+  final String draftId;
+  final Map<String, dynamic> roster;
+  @override
+  State<_RosterReviewDialog> createState() => _RosterReviewDialogState();
+}
+
+class _RosterReviewDialogState extends State<_RosterReviewDialog> {
+  final _supabase = Supabase.instance.client;
+  late Map<String, dynamic> _roster = widget.roster;
+  bool _saving = false;
+
+  List<Map<String, dynamic>> get _rows => (_roster['rows'] as List? ?? const [])
+      .whereType<Map>()
+      .map((row) => Map<String, dynamic>.from(row))
+      .toList();
+
+  Future<void> _edit(Map<String, dynamic> row) async {
+    final member = Map<String, dynamic>.from(
+      row['proposed_member'] as Map? ?? const {},
+    );
+    final fields = <String, TextEditingController>{
+      for (final key in [
+        'first_name',
+        'last_name',
+        'email',
+        'phone',
+        'address_line1',
+        'city',
+        'state',
+        'postal_code',
+        'membership_type',
+        'status',
+        'expiration',
+      ])
+        key: TextEditingController(text: member[key]?.toString() ?? ''),
+    };
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit roster row ${row['row_number']}'),
+        content: SizedBox(
+          width: 640,
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final entry in fields.entries)
+                  SizedBox(
+                    width: entry.key == 'address_line1' ? 616 : 302,
+                    child: TextField(
+                      controller: entry.value,
+                      decoration: InputDecoration(
+                        labelText: entry.key.replaceAll('_', ' '),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save row'),
+          ),
+        ],
+      ),
+    );
+    if (changed != true) {
+      for (final controller in fields.values) {
+        controller.dispose();
+      }
+      return;
+    }
+    for (final entry in fields.entries) {
+      member[entry.key] = entry.value.text.trim();
+      entry.value.dispose();
+    }
+    final errors = <String>[];
+    if ((member['first_name']?.toString().isEmpty ?? true) ||
+        (member['last_name']?.toString().isEmpty ?? true)) {
+      errors.add('Missing member name');
+    }
+    setState(() => _saving = true);
+    try {
+      final result = await _supabase.rpc(
+        'update_club_operations_roster_preview_row',
+        params: {
+          'p_draft_id': widget.draftId,
+          'p_row_number': row['row_number'],
+          'p_proposed_member': member,
+          'p_errors': errors,
+        },
+      );
+      if (mounted) {
+        setState(() => _roster = Map<String, dynamic>.from(result as Map));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Roster review — ${_rows.length} rows'),
+    content: SizedBox(
+      width: 1200,
+      height: 650,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: 1500,
+          child: ListView.builder(
+            itemCount: _rows.length,
+            itemBuilder: (context, index) {
+              final row = _rows[index];
+              final member = Map<String, dynamic>.from(
+                row['proposed_member'] as Map? ?? const {},
+              );
+              final name =
+                  '${member['first_name'] ?? ''} ${member['last_name'] ?? ''}'
+                      .trim();
+              return ListTile(
+                title: Text(
+                  '${row['row_number']}  $name  •  ${member['membership_type'] ?? ''}  •  ${member['status'] ?? ''}',
+                ),
+                subtitle: Text(
+                  'Email: ${member['email'] ?? '—'}  |  Phone: ${member['phone'] ?? '—'}  |  Address: ${member['address_line1'] ?? '—'}, ${member['city'] ?? ''}, ${member['state'] ?? ''} ${member['postal_code'] ?? ''}',
+                ),
+                trailing: IconButton(
+                  tooltip: 'Edit row',
+                  onPressed: _saving ? null : () => _edit(row),
+                  icon: const Icon(Icons.edit_outlined),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _saving ? null : () => Navigator.pop(context),
+        child: const Text('Close'),
+      ),
+    ],
+  );
 }
 
 class _Section extends StatelessWidget {
