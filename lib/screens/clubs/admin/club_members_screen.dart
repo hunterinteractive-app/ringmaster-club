@@ -293,6 +293,7 @@ class _ClubMembersScreenState extends State<ClubMembersScreen> {
                 ButtonSegment(value: 'active', label: Text('Active')),
                 ButtonSegment(value: 'expiring', label: Text('Expiring')),
                 ButtonSegment(value: 'expired', label: Text('Expired')),
+                ButtonSegment(value: 'inactive', label: Text('Inactive')),
                 ButtonSegment(value: 'suspended', label: Text('Suspended')),
               ],
               selected: {_statusFilter},
@@ -471,6 +472,7 @@ class _MemberCard extends StatelessWidget {
       case 'expiring':
         return scheme.tertiary;
       case 'expired':
+      case 'inactive':
       case 'suspended':
       case 'cancelled':
       case 'denied':
@@ -1190,6 +1192,20 @@ class _MembershipListUploadDialogState
     for (final type in widget.membershipTypes.where((type) => type.isActive)) {
       if (_normalizeLabel(type.name) == normalized) return type.id;
     }
+    final categoryKeywords = switch (normalized) {
+      'youth' => const ['youth', 'junior'],
+      'family' => const ['family', 'household', 'couple'],
+      _ => const ['individual', 'adult', 'single', 'open'],
+    };
+    final matches = widget.membershipTypes
+        .where((type) => type.isActive)
+        .where(
+          (type) => categoryKeywords.any(
+            (keyword) => _normalizeLabel(type.name).contains(keyword),
+          ),
+        )
+        .toList();
+    if (matches.length == 1) return matches.single.id;
     return null;
   }
 
@@ -1263,8 +1279,12 @@ class _MembershipListUploadDialogState
           'joined_at': _dateStorageValue(row.joinedDate),
           'current_term_start': _dateStorageValue(row.joinedDate),
           'current_term_end': _dateStorageValue(row.expireDate),
-          'status': expired ? 'expired' : 'active',
+          // Legacy spreadsheets often label lapsed people either "Expired" or
+          // "Inactive". Keep them in the roster without presenting them as a
+          // current member.
+          'status': row.importStatus ?? (expired ? 'inactive' : 'active'),
           'recommendation': row.recommendation,
+          'linked_people': row.linkedPeople,
           // Keep this aligned with the membership source values enforced by
           // the database. The screen itself supplies the one-time-list context.
           'source': 'import',
@@ -1364,9 +1384,9 @@ class _MembershipListUploadDialogState
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 14),
-              const _SectionTitle('Map the Member column'),
+              const _SectionTitle('Detected membership-type mapping'),
               const Text(
-                'The spreadsheet’s Member value identifies Open or Youth. Choose the matching club membership type for each value.',
+                'The importer detected each person as Individual, Family, or Youth from the type column, youth indicator, and names. Confirm any mapping it could not determine automatically.',
               ),
               const SizedBox(height: 12),
               for (final category in categories) ...[
@@ -1486,9 +1506,8 @@ class _MembershipListUploadDialogState
                           DataCell(Text(_dateText(row.expireDate))),
                           DataCell(
                             Text(
-                              row.expireDate != null &&
-                                      row.expireDate!.isBefore(DateTime.now())
-                                  ? 'Expired'
+                              row.importStatus == 'inactive'
+                                  ? 'Inactive'
                                   : 'Active',
                             ),
                           ),
@@ -1550,6 +1569,8 @@ class _ImportedMembershipRow {
     this.recommendation,
     this.joinedDate,
     this.email,
+    this.importStatus,
+    this.linkedPeople = const {},
   });
 
   final String? membershipCategory;
@@ -1569,6 +1590,8 @@ class _ImportedMembershipRow {
   final String? recommendation;
   final DateTime? joinedDate;
   final String? email;
+  final String? importStatus;
+  final Map<String, dynamic> linkedPeople;
 
   String get fullName => '${firstName ?? ''} ${lastName ?? ''}'.trim();
 
@@ -1586,36 +1609,6 @@ class _ImportedMembershipRow {
       return '${category}name:${_normalizeLabel(fullName)}';
     }
     return email == null ? null : '${category}email:${_normalizeLabel(email!)}';
-  }
-
-  factory _ImportedMembershipRow.fromColumns(
-    Map<String, String> columns, {
-    required int sourceRow,
-  }) {
-    String? value(String label) {
-      final text = columns[_normalizeLabel(label)]?.trim();
-      return text == null || text.isEmpty ? null : text;
-    }
-
-    return _ImportedMembershipRow(
-      sourceRow: sourceRow,
-      membershipCategory: value('Member'),
-      membershipNumber: value('Member Number'),
-      firstName: value('FirstName'),
-      lastName: value('LastName'),
-      showingName: value('Showing Name'),
-      arbaNumber: value('ARBA'),
-      birthDate: _importDate(value('Y Birthdate')),
-      address: value('Address'),
-      city: value('City'),
-      state: value('State'),
-      postalCode: value('ZIP'),
-      phone: value('HomePhone'),
-      expireDate: _importDate(value('ExpireDate')),
-      recommendation: value('recommend'),
-      joinedDate: _importDate(value('JOINED')),
-      email: value('email'),
-    );
   }
 }
 
@@ -1859,28 +1852,269 @@ List<_ImportedMembershipRow> _readMembershipRows({
   }
 
   if (table.isEmpty) return const [];
-  final headers = table.first.map(_normalizeLabel).toList(growable: false);
-  if (!headers.contains(_normalizeLabel('Member')) ||
-      !headers.contains(_normalizeLabel('FirstName')) ||
-      !headers.contains(_normalizeLabel('LastName'))) {
+  final headerRowIndex = _detectRosterHeaderRow(table);
+  if (headerRowIndex == null) {
     throw const FormatException(
-      'The list needs Member, FirstName, and LastName column headers.',
+      'We could not find a member-name column. Include a header such as Name, '
+      'Member Name, First Name/Last Name, or FirstName/LastName.',
     );
   }
 
+  final headers = table[headerRowIndex]
+      .map(_normalizeLabel)
+      .toList(growable: false);
   final importedRows = <_ImportedMembershipRow>[];
-  for (var rowIndex = 1; rowIndex < table.length; rowIndex++) {
-    final row = table[rowIndex];
-    if (!row.any((cell) => cell.trim().isNotEmpty)) continue;
+  for (var rowIndex = headerRowIndex + 1; rowIndex < table.length; rowIndex++) {
+    final rawRow = table[rowIndex];
+    if (!rawRow.any((cell) => cell.trim().isNotEmpty)) continue;
+    final row = _repairOverflowingRosterRow(rawRow, headers);
     final columns = <String, String>{
       for (var index = 0; index < headers.length; index++)
         headers[index]: index < row.length ? row[index].trim() : '',
     };
-    importedRows.add(
-      _ImportedMembershipRow.fromColumns(columns, sourceRow: rowIndex + 1),
-    );
+    final record = _normalizeRosterRecord(columns, sourceRow: rowIndex + 1);
+    if (record != null) importedRows.add(record);
   }
   return importedRows;
+}
+
+@visibleForTesting
+List<Map<String, Object?>> parseMembershipRosterForTesting({
+  required Uint8List bytes,
+  required String extension,
+}) => _readMembershipRows(bytes: bytes, extension: extension)
+    .map(
+      (row) => <String, Object?>{
+        'sourceRow': row.sourceRow,
+        'category': row.membershipCategory,
+        'firstName': row.firstName,
+        'lastName': row.lastName,
+        'status': row.importStatus,
+        'address': row.address,
+        'linkedPeople': row.linkedPeople,
+      },
+    )
+    .toList(growable: false);
+
+const _rosterAliases = <String, Set<String>>{
+  'name': {'name', 'membername', 'fullname', 'member'},
+  'firstName': {'firstname', 'first', 'givenname'},
+  'lastName': {'lastname', 'last', 'surname', 'familyname'},
+  'email': {'email', 'emailaddress', 'e-mail'},
+  'expiration': {
+    'expiration',
+    'expirationdate',
+    'expiredate',
+    'expiry',
+    'expirydate',
+    'expires',
+  },
+  'status': {'activeinactive', 'status', 'membershipstatus'},
+  'youth': {'youth', 'isyouth', 'youthmember'},
+  'membershipType': {
+    'member',
+    'membershiptype',
+    'membership',
+    'membertype',
+    'category',
+  },
+  'membershipNumber': {'membernumber', 'membershipnumber', 'number', 'id'},
+  'address': {'address', 'addressline1', 'street', 'streetaddress'},
+  'city': {'city', 'town'},
+  'state': {'state', 'province', 'stateprovince'},
+  'postalCode': {'zip', 'zipcode', 'postalcode', 'postcode'},
+  'phone': {'homephone', 'phone', 'phonenumber', 'telephone', 'mobile'},
+  'arbaNumber': {'arba', 'arbanumber'},
+  'birthDate': {'ybirthdate', 'birthdate', 'dateofbirth', 'dob'},
+  'joinedDate': {'joined', 'joineddate', 'joindate', 'member since'},
+  'showingName': {'showingname', 'rabbitry', 'rabbitryname', 'businessname'},
+  'recommendation': {'recommend', 'recommendation', 'referredby'},
+};
+
+int? _detectRosterHeaderRow(List<List<String>> table) {
+  var bestScore = 0;
+  int? bestIndex;
+  for (var rowIndex = 0; rowIndex < table.length && rowIndex < 30; rowIndex++) {
+    final labels = table[rowIndex].map(_normalizeLabel).toSet();
+    final hasName =
+        _matchesRosterAlias(labels, 'name') ||
+        (_matchesRosterAlias(labels, 'firstName') &&
+            _matchesRosterAlias(labels, 'lastName'));
+    if (!hasName) continue;
+    final score = _rosterAliases.keys
+        .where((field) => _matchesRosterAlias(labels, field))
+        .length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = rowIndex;
+    }
+  }
+  return bestIndex;
+}
+
+bool _matchesRosterAlias(Set<String> labels, String field) =>
+    labels.any((label) => _rosterAliases[field]!.contains(label));
+
+String? _rosterValue(Map<String, String> columns, String field) {
+  for (final alias in _rosterAliases[field]!) {
+    final value = columns[alias]?.trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+List<String> _repairOverflowingRosterRow(
+  List<String> rawRow,
+  List<String> headers,
+) {
+  if (rawRow.length <= headers.length) return rawRow;
+  final addressIndex = headers.indexWhere(
+    (header) => _rosterAliases['address']!.contains(header),
+  );
+  if (addressIndex < 0) return rawRow;
+  final overflow = rawRow.length - headers.length;
+  final repaired = <String>[...rawRow.take(addressIndex)];
+  repaired.add(
+    rawRow
+        .skip(addressIndex)
+        .take(overflow + 1)
+        .map((cell) => cell.trim())
+        .where((cell) => cell.isNotEmpty)
+        .join(', '),
+  );
+  repaired.addAll(rawRow.skip(addressIndex + overflow + 1));
+  return repaired;
+}
+
+_ImportedMembershipRow? _normalizeRosterRecord(
+  Map<String, String> columns, {
+  required int sourceRow,
+}) {
+  final fullName = _rosterValue(columns, 'name');
+  var firstName = _rosterValue(columns, 'firstName');
+  var lastName = _rosterValue(columns, 'lastName');
+  final youthValue = _rosterValue(columns, 'youth')?.toLowerCase();
+  final isYouth =
+      youthValue != null &&
+      youthValue.isNotEmpty &&
+      !{'n', 'no', 'false', '0', 'adult'}.contains(youthValue);
+  final linkedPeople = <String, dynamic>{};
+
+  if ((firstName == null || lastName == null) && fullName != null) {
+    final parsed = _parseRosterName(fullName);
+    firstName = parsed.firstName;
+    lastName = parsed.lastName;
+    if (!isYouth && parsed.additionalPeople.isNotEmpty) {
+      linkedPeople['additional_manual_people'] = parsed.additionalPeople;
+      linkedPeople['additional_exhibitor_ids'] = const <String>[];
+      linkedPeople['additional_people_summary'] =
+          '${parsed.additionalPeople.length} additional family member${parsed.additionalPeople.length == 1 ? '' : 's'}';
+    }
+  }
+
+  // Ignore a secondary-header row (for example a lone "Date" below
+  // "Expiration") and title/footer lines rather than treating them as people.
+  if (firstName == null || lastName == null) {
+    return null;
+  }
+  final sourceStatus = _rosterValue(columns, 'status')?.toLowerCase();
+  final expires = _importDate(_rosterValue(columns, 'expiration'));
+  final isInactive =
+      sourceStatus != null &&
+          (sourceStatus.contains('inactive') ||
+              sourceStatus.contains('expired') ||
+              sourceStatus.contains('lapsed')) ||
+      (sourceStatus == null &&
+          expires != null &&
+          expires.isBefore(DateTime.now()));
+  final explicitType = _rosterValue(columns, 'membershipType');
+  final category = isYouth
+      ? 'Youth'
+      : linkedPeople.isNotEmpty
+      ? 'Family'
+      : _normalizeMembershipCategory(explicitType);
+
+  return _ImportedMembershipRow(
+    sourceRow: sourceRow,
+    membershipCategory: category,
+    membershipNumber: _rosterValue(columns, 'membershipNumber'),
+    firstName: firstName,
+    lastName: lastName,
+    showingName: _rosterValue(columns, 'showingName'),
+    arbaNumber: _rosterValue(columns, 'arbaNumber'),
+    birthDate: _importDate(_rosterValue(columns, 'birthDate')),
+    address: _rosterValue(columns, 'address'),
+    city: _rosterValue(columns, 'city'),
+    state: _rosterValue(columns, 'state'),
+    postalCode: _rosterValue(columns, 'postalCode'),
+    phone: _rosterValue(columns, 'phone'),
+    expireDate: expires,
+    recommendation: _rosterValue(columns, 'recommendation'),
+    joinedDate: _importDate(_rosterValue(columns, 'joinedDate')),
+    email: _rosterValue(columns, 'email'),
+    importStatus: isInactive ? 'inactive' : 'active',
+    linkedPeople: linkedPeople,
+  );
+}
+
+String _normalizeMembershipCategory(String? value) {
+  final label = _normalizeLabel(value ?? '');
+  if (label.contains('youth') || label == 'y') return 'Youth';
+  if (label.contains('family') ||
+      label.contains('household') ||
+      label.contains('couple')) {
+    return 'Family';
+  }
+  return 'Individual';
+}
+
+class _ParsedRosterName {
+  const _ParsedRosterName(this.firstName, this.lastName, this.additionalPeople);
+  final String? firstName;
+  final String? lastName;
+  final List<Map<String, String>> additionalPeople;
+}
+
+_ParsedRosterName _parseRosterName(String rawName) {
+  final parts = rawName.trim().split(RegExp(r'\s*(?:&|\band\b)\s*'));
+  final familyLastName = _splitRosterPersonName(parts.last)?.$2;
+  final primary = _splitRosterPersonName(
+    parts.first,
+    fallbackLastName: familyLastName,
+  );
+  if (primary == null) return const _ParsedRosterName(null, null, []);
+  final additionalPeople = <Map<String, String>>[];
+  for (final rawAdditional in parts.skip(1)) {
+    final additional = _splitRosterPersonName(
+      rawAdditional,
+      fallbackLastName: primary.$2,
+    );
+    if (additional != null) {
+      additionalPeople.add({
+        'first_name': additional.$1,
+        'last_name': additional.$2,
+        'classification': 'adult',
+      });
+    }
+  }
+  return _ParsedRosterName(primary.$1, primary.$2, additionalPeople);
+}
+
+(String, String)? _splitRosterPersonName(
+  String value, {
+  String? fallbackLastName,
+}) {
+  final words = value
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList();
+  if (words.isEmpty) return null;
+  if (words.length == 1 && fallbackLastName != null) {
+    return (words.single, fallbackLastName);
+  }
+  if (words.length < 2) return null;
+  return (words.sublist(0, words.length - 1).join(' '), words.last);
 }
 
 List<List<String>> _readXlsxRows(Uint8List bytes) {
@@ -2030,7 +2264,9 @@ DateTime? _importDate(String? value) {
   final month = int.parse(match.group(1)!);
   final day = int.parse(match.group(2)!);
   var year = int.parse(match.group(3)!);
-  if (year < 100) year += year >= 70 ? 1900 : 2000;
+  if (year < 100) {
+    year += year >= 70 ? 1900 : 2000;
+  }
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   return DateTime(year, month, day);
 }
