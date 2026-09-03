@@ -538,6 +538,7 @@ class _RosterReviewDialogState extends State<_RosterReviewDialog> {
         'state',
         'postal_code',
         'membership_type',
+        'membership_term',
         'status',
         'expiration',
       ])
@@ -648,7 +649,7 @@ class _RosterReviewDialogState extends State<_RosterReviewDialog> {
                   ],
                 ),
                 title: Text(
-                  '$name  •  ${member['membership_type'] ?? ''}  •  ${member['status'] ?? ''}',
+                  '$name  •  ${member['membership_type'] ?? ''} ${member['membership_term'] == 'lifetime' ? '(Lifetime)' : ''}  •  ${member['status'] ?? ''}',
                 ),
                 subtitle: Text(
                   'Email: ${member['email'] ?? '—'}  |  Phone: ${member['phone'] ?? '—'}  |  Address: ${member['address_line1'] ?? '—'}, ${member['city'] ?? ''}, ${member['state'] ?? ''} ${member['postal_code'] ?? ''}',
