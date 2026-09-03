@@ -46,6 +46,7 @@ class _ClubOnboardingInviteScreenState
   bool _saving = false;
   String? _error;
   String _email = '';
+  String? _draftId;
   String _onboardingStatus = 'in_progress';
   String? _provisionedClubId;
   Map<String, dynamic> _purchasedEntitlements = const {};
@@ -128,6 +129,7 @@ class _ClubOnboardingInviteScreenState
       final data = Map<String, dynamic>.from(response as Map);
       final answers = Map<String, dynamic>.from(data['answers'] as Map? ?? {});
       _email = data['email']?.toString() ?? '';
+      _draftId = data['draft_id']?.toString();
       _onboardingStatus = data['status']?.toString() ?? 'in_progress';
       _provisionedClubId = data['provisioned_club_id']?.toString();
       _purchasedEntitlements = Map<String, dynamic>.from(
@@ -445,14 +447,21 @@ class _ClubOnboardingInviteScreenState
     );
     if (picked == null || picked.files.single.bytes == null) return;
     final file = picked.files.single;
+    final draftId = _draftId;
+    if (draftId == null || draftId.isEmpty) {
+      throw StateError(
+        'Unable to identify this onboarding draft. Refresh and try again.',
+      );
+    }
     try {
       setState(() {
         _saving = true;
         _error = null;
       });
       final parsed = _parseCsv(String.fromCharCodes(file.bytes!));
-      if (parsed.length < 2)
+      if (parsed.length < 2) {
         throw Exception('The CSV needs a header row and at least one member.');
+      }
       final headers = parsed.first.map((cell) => cell.trim()).toList();
       final rows = <Map<String, dynamic>>[];
       for (var index = 1; index < parsed.length; index++) {
@@ -464,6 +473,23 @@ class _ClubOnboardingInviteScreenState
         }
         rows.add(_normalizeRosterRow(source, index + 1));
       }
+      final safeFileName = file.name.replaceAll(
+        RegExp(r'[^A-Za-z0-9._-]'),
+        '_',
+      );
+      final storageBucket = 'club-onboarding-rosters';
+      final storagePath =
+          '$draftId/rosters/${DateTime.now().microsecondsSinceEpoch}_$safeFileName';
+      await _supabase.storage
+          .from(storageBucket)
+          .uploadBinary(
+            storagePath,
+            file.bytes!,
+            fileOptions: const FileOptions(
+              contentType: 'text/csv',
+              upsert: false,
+            ),
+          );
       final result = await _supabase.rpc(
         'save_club_onboarding_roster_preview',
         params: {
@@ -471,16 +497,20 @@ class _ClubOnboardingInviteScreenState
           'p_file_name': file.name,
           'p_headers': headers,
           'p_rows': rows,
+          'p_storage_bucket': storageBucket,
+          'p_storage_path': storagePath,
         },
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _memberImport = true;
           _rosterPreview = Map<String, dynamic>.from(result as Map);
         });
+      }
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(() => _error = 'Unable to prepare roster preview: $error');
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ClubOperationsScreen extends StatefulWidget {
   const ClubOperationsScreen({super.key});
@@ -131,6 +132,13 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
           ),
         ),
         actions: [
+          if ((roster['storage_bucket']?.toString().isNotEmpty ?? false) &&
+              (roster['storage_path']?.toString().isNotEmpty ?? false))
+            OutlinedButton.icon(
+              onPressed: () => _downloadRoster(roster),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Download CSV'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -138,6 +146,29 @@ class _ClubOperationsScreenState extends State<ClubOperationsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _downloadRoster(Map<String, dynamic> roster) async {
+    final bucket = roster['storage_bucket']?.toString();
+    final path = roster['storage_path']?.toString();
+    if (bucket == null || bucket.isEmpty || path == null || path.isEmpty) {
+      return;
+    }
+    try {
+      final url = await _supabase.storage
+          .from(bucket)
+          .createSignedUrl(path, 600);
+      if (!await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      )) {
+        throw StateError('The browser could not open the roster download.');
+      }
+    } catch (error) {
+      if (mounted) {
+        _showNotice('Unable to download roster: $error', isError: true);
+      }
+    }
   }
 
   @override
