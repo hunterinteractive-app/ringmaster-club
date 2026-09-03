@@ -636,16 +636,22 @@ class _RosterReviewDialogState extends State<_RosterReviewDialog> {
                   '${member['first_name'] ?? ''} ${member['last_name'] ?? ''}'
                       .trim();
               return ListTile(
+                leading: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(row['row_number']?.toString() ?? ''),
+                    IconButton(
+                      tooltip: 'Edit row',
+                      onPressed: _saving ? null : () => _edit(row),
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
+                  ],
+                ),
                 title: Text(
-                  '${row['row_number']}  $name  •  ${member['membership_type'] ?? ''}  •  ${member['status'] ?? ''}',
+                  '$name  •  ${member['membership_type'] ?? ''}  •  ${member['status'] ?? ''}',
                 ),
                 subtitle: Text(
                   'Email: ${member['email'] ?? '—'}  |  Phone: ${member['phone'] ?? '—'}  |  Address: ${member['address_line1'] ?? '—'}, ${member['city'] ?? ''}, ${member['state'] ?? ''} ${member['postal_code'] ?? ''}',
-                ),
-                trailing: IconButton(
-                  tooltip: 'Edit row',
-                  onPressed: _saving ? null : () => _edit(row),
-                  icon: const Icon(Icons.edit_outlined),
                 ),
               );
             },
