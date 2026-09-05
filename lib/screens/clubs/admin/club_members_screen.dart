@@ -133,10 +133,25 @@ class _ClubMembersScreenState extends State<ClubMembersScreen> {
 
   List<_ClubMember> get _filteredMembers {
     final query = _searchController.text.trim().toLowerCase();
+    final today = DateUtils.dateOnly(DateTime.now());
+    final expiringThrough = today.add(const Duration(days: 60));
 
     return _members.where((member) {
-      final matchesStatus =
-          _statusFilter == 'all' || member.status == _statusFilter;
+      final termEnd = member.currentTermEnd == null
+          ? null
+          : DateUtils.dateOnly(member.currentTermEnd!);
+      final expiresSoon =
+          termEnd != null &&
+          !termEnd.isBefore(today) &&
+          !termEnd.isAfter(expiringThrough);
+      final matchesStatus = switch (_statusFilter) {
+        'all' => true,
+        // Memberships are normally kept active until their term actually
+        // ends, so the Expiring view must derive this from the end date.
+        'expiring' => member.status == 'expiring' ||
+            (member.status == 'active' && expiresSoon),
+        _ => member.status == _statusFilter,
+      };
 
       if (!matchesStatus) return false;
       if (query.isEmpty) return true;

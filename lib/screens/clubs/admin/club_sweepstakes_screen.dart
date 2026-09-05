@@ -4686,8 +4686,7 @@ class _SweepstakesParserRulesDialogState
   List<Map<String, dynamic>> get _currentRules => _rules
       .where(
         (rule) =>
-            rule['rule_type'] != 'points_rule' &&
-            rule['rule_type'] != 'address_stop_word',
+            const {'name_alias', 'name_pattern'}.contains(rule['rule_type']),
       )
       .toList();
 
@@ -4726,19 +4725,26 @@ class _SweepstakesParserRulesDialogState
                   Expanded(
                     child: TabBarView(
                       children: [
-                        _RulesTable(
-                          rules: _currentRules,
-                          emptyMessage:
-                              'Name corrections, breed aliases, and division assignments will appear here. Address cleanup is built in for every club.',
-                          columns: const [
-                            'Rule type',
-                            'Match',
-                            'Outcome',
-                            'Active',
+                        Column(
+                          children: [
+                            const _YouthOpenPointsPolicyCard(),
+                            Expanded(
+                              child: _RulesTable(
+                                rules: _currentRules,
+                                emptyMessage:
+                                    'Add an exhibitor name correction or pattern. Address cleanup is built in for every club.',
+                                columns: const [
+                                  'Rule type',
+                                  'Match',
+                                  'Outcome',
+                                  'Active',
+                                ],
+                                onChanged: _setRuleActive,
+                                onEdit: _editCurrentRule,
+                                onDelete: _deleteInactiveRule,
+                              ),
+                            ),
                           ],
-                          onChanged: _setRuleActive,
-                          onEdit: _editCurrentRule,
-                          onDelete: _deleteInactiveRule,
                         ),
                         _buildIntakeTab(context),
                         _RulesTable(
@@ -4770,7 +4776,7 @@ class _SweepstakesParserRulesDialogState
         FilledButton.icon(
           onPressed: _addCurrentRule,
           icon: const Icon(Icons.add),
-          label: const Text('Add current rule'),
+          label: const Text('Add name rule'),
         ),
         FilledButton.icon(
           onPressed: _addScoringRule,
@@ -4886,6 +4892,29 @@ class _SweepstakesParserRulesDialogState
   );
 }
 
+class _YouthOpenPointsPolicyCard extends StatelessWidget {
+  const _YouthOpenPointsPolicyCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      color: colorScheme.secondaryContainer,
+      child: ListTile(
+        leading: Icon(
+          Icons.groups_2_outlined,
+          color: colorScheme.onSecondaryContainer,
+        ),
+        title: const Text('Youth Open-show points policy'),
+        subtitle: const Text(
+          'An active Youth member’s points from an Open show count toward Youth Sweepstakes. Youth members do not appear in Open award boards.',
+        ),
+      ),
+    );
+  }
+}
+
 class _ParserRuleEditorDialog extends StatefulWidget {
   const _ParserRuleEditorDialog({this.initialRule});
 
@@ -4941,14 +4970,6 @@ class _ParserRuleEditorDialogState extends State<_ParserRuleEditorDialog> {
               DropdownMenuItem(
                 value: 'name_pattern',
                 child: Text('Exhibitor name pattern'),
-              ),
-              DropdownMenuItem(
-                value: 'breed_alias',
-                child: Text('Breed alias'),
-              ),
-              DropdownMenuItem(
-                value: 'division_assignment',
-                child: Text('Division assignment'),
               ),
             ],
             onChanged: (value) => setState(() => _type = value!),
