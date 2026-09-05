@@ -6166,6 +6166,17 @@ class _ExpectedReportEditorDialogState
   DateTime? _parseDate(String value) => DateTime.tryParse(value.trim());
   String? _optional(String value) => value.trim().isEmpty ? null : value.trim();
 
+  Future<void> _pickDate(TextEditingController controller) async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _parseDate(controller.text) ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() => controller.text = _dateText(selected));
+  }
+
   Future<void> _save() async {
     if (_isSaving || !_formKey.currentState!.validate()) return;
     final showDate = _parseDate(_showDate.text);
@@ -6240,17 +6251,31 @@ class _ExpectedReportEditorDialogState
                 children: [
                   TextFormField(
                     controller: _showDate,
-                    decoration: const InputDecoration(
-                      labelText: 'Show date (YYYY-MM-DD)',
+                    readOnly: true,
+                    onTap: () => _pickDate(_showDate),
+                    decoration: InputDecoration(
+                      labelText: 'Show date',
+                      suffixIcon: IconButton(
+                        tooltip: 'Choose show date',
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        onPressed: () => _pickDate(_showDate),
+                      ),
                     ),
                     validator: (value) => _parseDate(value ?? '') == null
-                        ? 'Use YYYY-MM-DD.'
+                        ? 'Choose a show date.'
                         : null,
                   ),
                   TextFormField(
                     controller: _showEndDate,
-                    decoration: const InputDecoration(
+                    readOnly: true,
+                    onTap: () => _pickDate(_showEndDate),
+                    decoration: InputDecoration(
                       labelText: 'End date (optional)',
+                      suffixIcon: IconButton(
+                        tooltip: 'Choose end date',
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        onPressed: () => _pickDate(_showEndDate),
+                      ),
                     ),
                   ),
                 ],
