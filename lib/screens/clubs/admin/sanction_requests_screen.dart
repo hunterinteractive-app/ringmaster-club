@@ -917,7 +917,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       'sanction_category': _sanctionCategory,
       'status': _status,
       'fee_due': double.tryParse(_feeDueController.text.trim()) ?? 0,
-      'amount_paid': double.tryParse(_amountPaidController.text.trim()) ?? 0,
+      'amount_paid': _recordedAmountPaid(),
       'currency': _currencyController.text.trim().isEmpty
           ? 'usd'
           : _currencyController.text.trim().toLowerCase(),
@@ -935,9 +935,18 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
             .insert(payload)
             .select('id')
             .single();
-        await _createSubmittedRequestCommunication(
-          requestId: inserted['id'].toString(),
-        );
+        // A staff-created request can be entered directly as approved (or
+        // returned). In that case, notify the requester of the review result
+        // instead of incorrectly sending the generic submission receipt.
+        if (_status == 'approved' || _status == 'returned') {
+          await _createReviewCommunicationForCurrentStatus(
+            requestId: inserted['id'].toString(),
+          );
+        } else {
+          await _createSubmittedRequestCommunication(
+            requestId: inserted['id'].toString(),
+          );
+        }
       } else {
         await _supabase
             .from('club_sanction_requests')
@@ -985,12 +994,8 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
         'show_date': _dateValue(_showDateController.text) ?? '',
         'contact_name': _contactNameController.text.trim(),
         'request_scope': _selectedSanctionScopeLabel(),
-        'amount_due': _money(
-          double.tryParse(_feeDueController.text.trim()) ?? 0,
-        ),
-        'amount_paid': _money(
-          double.tryParse(_amountPaidController.text.trim()) ?? 0,
-        ),
+        'amount_due': _remainingBalanceLabel(),
+        'amount_paid': _amountPaidLabel(),
         'payment_method': _titleCase(_paymentStatus),
         'staff_message': '',
       },
@@ -1022,59 +1027,78 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
   Future<void> _createReviewCommunicationForCurrentStatus({
     required String requestId,
   }) async {
-      final templateKey = switch (_status) {
-        'approved' => 'sanction_approved',
-        'returned' => 'sanction_needs_info',
-        _ => null,
-      };
+    final templateKey = switch (_status) {
+      'approved' => 'sanction_approved',
+      'returned' => 'sanction_needs_info',
+      _ => null,
+    };
 
-      if (templateKey == null) return;
+    if (templateKey == null) return;
 
-      final recipientName = _contactNameController.text.trim().isEmpty
-          ? _requestingClubController.text.trim()
-          : _contactNameController.text.trim();
+    final recipientName = _contactNameController.text.trim().isEmpty
+        ? _requestingClubController.text.trim()
+        : _contactNameController.text.trim();
 
-      debugPrint(
-        'Creating sanction dialog review communication: '
-        'template=$templateKey request=$requestId '
-        'recipient=${_contactEmailController.text.trim()} status=$_status',
-      );
+    debugPrint(
+      'Creating sanction dialog review communication: '
+      'template=$templateKey request=$requestId '
+      'recipient=${_contactEmailController.text.trim()} status=$_status',
+    );
 
-      final communicationId =
-          await _communicationsService.createWorkflowCommunication(
-        clubId: widget.clubId,
-        clubName: widget.clubName,
-        templateKey: templateKey,
-        relatedType: 'sanction_request',
-        relatedId: requestId,
-        recipientEmail: _nullIfBlank(_contactEmailController.text),
-        recipientName: recipientName,
-        audienceType: 'sanction_request',
-        variables: {
-          'requesting_club_name': _requestingClubController.text.trim(),
-          'show_date': _dateValue(_showDateController.text) ?? '',
-          'contact_name': _contactNameController.text.trim(),
-          'request_scope': _selectedSanctionScopeLabel(),
-          'amount_due': _money(
-            double.tryParse(_feeDueController.text.trim()) ?? 0,
-          ),
-          'amount_paid': _money(
-            double.tryParse(_amountPaidController.text.trim()) ?? 0,
-          ),
-          'payment_method': _titleCase(_paymentStatus),
-          'sanction_number': _sanctionNumberValue() ?? '',
-          'sanction_numbers': _sanctionNumberValue() ?? '',
-          'staff_message': _staffNotesController.text.trim(),
-        },
-        preferEmailWhenAvailable: true,
-        createdBy: _supabase.auth.currentUser?.id,
-      );
+    final communicationId = await _communicationsService
+        .createWorkflowCommunication(
+          clubId: widget.clubId,
+          clubName: widget.clubName,
+          templateKey: templateKey,
+          relatedType: 'sanction_request',
+          relatedId: requestId,
+          recipientEmail: _nullIfBlank(_contactEmailController.text),
+          recipientName: recipientName,
+          audienceType: 'sanction_request',
+          variables: {
+            'requesting_club_name': _requestingClubController.text.trim(),
+            'show_date': _dateValue(_showDateController.text) ?? '',
+            'contact_name': _contactNameController.text.trim(),
+            'request_scope': _selectedSanctionScopeLabel(),
+            'amount_due': _remainingBalanceLabel(),
+            'amount_paid': _amountPaidLabel(),
+            'payment_method': _titleCase(_paymentStatus),
+            'sanction_number': _sanctionNumberValue() ?? '',
+            'sanction_numbers': _sanctionNumberValue() ?? '',
+            'staff_message': _staffNotesController.text.trim(),
+          },
+          preferEmailWhenAvailable: true,
+          createdBy: _supabase.auth.currentUser?.id,
+        );
 
-      debugPrint(
-        'Sanction dialog review communication created: '
-        'template=$templateKey id=$communicationId',
-      );
-    }
+    debugPrint(
+      'Sanction dialog review communication created: '
+      'template=$templateKey id=$communicationId',
+    );
+  }
+
+  String _remainingBalanceLabel() {
+    final feeDue = double.tryParse(_feeDueController.text.trim()) ?? 0;
+    // Payment status is authoritative for manually recorded payments. This
+    // prevents an approval email from showing a balance due when staff has
+    // marked the request paid but has not re-entered the matching amount.
+    final remaining = _paymentStatus == 'paid' || _paymentStatus == 'waived'
+        ? 0.0
+        : (feeDue - _recordedAmountPaid())
+              .clamp(0.0, double.infinity)
+              .toDouble();
+    return _money(remaining);
+  }
+
+  double _recordedAmountPaid() {
+    final amountPaid = double.tryParse(_amountPaidController.text.trim()) ?? 0;
+    if (_paymentStatus != 'paid') return amountPaid;
+
+    final feeDue = double.tryParse(_feeDueController.text.trim()) ?? 0;
+    return amountPaid < feeDue ? feeDue : amountPaid;
+  }
+
+  String _amountPaidLabel() => _money(_recordedAmountPaid());
 
   List<Widget> _buildSanctionNumberFields() {
     return [
@@ -1089,9 +1113,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     ];
   }
 
-  TextEditingController _sanctionNumberControllerFor(
-    _SanctionNumberSlot slot,
-  ) {
+  TextEditingController _sanctionNumberControllerFor(_SanctionNumberSlot slot) {
     return _sanctionNumberControllers.putIfAbsent(
       slot.key,
       () => TextEditingController(text: _existingSanctionNumberForSlot(slot)),
@@ -1594,10 +1616,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
 }
 
 class _SanctionNumberSlot {
-  const _SanctionNumberSlot({
-    required this.key,
-    required this.label,
-  });
+  const _SanctionNumberSlot({required this.key, required this.label});
 
   final String key;
   final String label;
