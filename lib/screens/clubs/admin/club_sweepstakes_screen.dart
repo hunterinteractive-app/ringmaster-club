@@ -28,6 +28,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   String? _errorMessage;
   bool _sweepstakesAddonEnabled = false;
   bool _breedPaybackEnabled = false;
+  bool _youthOpenShowPointsEnabled = true;
   String? _selectedSeasonId;
   String _standingFilter = 'all';
 
@@ -112,7 +113,9 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     final isYouth = (_nullableString(member['membership_type_name']) ?? '')
         .toLowerCase()
         .contains('youth');
-    final target = isYouth ? 'youth' : 'open';
+    // Reports with an explicit division retain it. This fallback only applies
+    // to unassigned results, including imported Open-show reports.
+    final target = isYouth && _youthOpenShowPointsEnabled ? 'youth' : 'open';
     return divisions.where((division) {
       if (division.seasonId != seasonId) return false;
       final label = '${division.name} ${division.code ?? ''}'.toLowerCase();
@@ -200,6 +203,14 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           .eq('club_id', widget.club.clubId)
           .maybeSingle();
       final breedPaybackEnabled = paybackSettingResponse?['is_enabled'] == true;
+
+      final sweepstakesSettingsResponse = await _supabase
+          .from('club_sweepstakes_settings')
+          .select('youth_open_show_points_enabled')
+          .eq('club_id', widget.club.clubId)
+          .maybeSingle();
+      final youthOpenShowPointsEnabled =
+          sweepstakesSettingsResponse?['youth_open_show_points_enabled'] != false;
 
       final sweepstakesAddonEnabled =
           clubRow['sweepstakes_addon_enabled'] == true;
@@ -433,6 +444,7 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
       setState(() {
         _sweepstakesAddonEnabled = true;
         _breedPaybackEnabled = breedPaybackEnabled;
+        _youthOpenShowPointsEnabled = youthOpenShowPointsEnabled;
         _seasons = seasons;
         _divisions = divisions;
         _standings = standings;
@@ -617,11 +629,12 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   }
 
   Future<void> _openParserRules() async {
-    await showDialog<bool>(
+    final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _SweepstakesParserRulesDialog(clubId: widget.club.clubId),
     );
+    if (changed == true) await _loadData();
   }
 
   Future<void> _openBreedPaybackFund() async {
@@ -4628,6 +4641,8 @@ class _SweepstakesParserRulesDialogState
   bool _intakeEnabled = false;
   bool _remindersEnabled = false;
   bool _approvalRequired = false;
+  bool _youthOpenShowPointsEnabled = true;
+  bool _savingYouthOpenShowPolicy = false;
   int _dueDays = 30;
   int _retentionDays = 365;
   String? _forwardingAddress;
@@ -4651,7 +4666,8 @@ class _SweepstakesParserRulesDialogState
             .from('club_sweepstakes_settings')
             .select(
               'report_intake_enabled,automatic_report_reminders_enabled,'
-              'reminder_approval_required,report_due_days,report_retention_days',
+              'reminder_approval_required,report_due_days,report_retention_days,'
+              'youth_open_show_points_enabled',
             )
             .eq('club_id', widget.clubId)
             .maybeSingle(),
@@ -4673,6 +4689,8 @@ class _SweepstakesParserRulesDialogState
         _remindersEnabled =
             settings?['automatic_report_reminders_enabled'] == true;
         _approvalRequired = settings?['reminder_approval_required'] == true;
+        _youthOpenShowPointsEnabled =
+            settings?['youth_open_show_points_enabled'] != false;
         _dueDays = _nullableInt(settings?['report_due_days']) ?? 30;
         _retentionDays =
             _nullableInt(settings?['report_retention_days']) ?? 365;
@@ -4799,6 +4817,7 @@ class _SweepstakesParserRulesDialogState
         'reminder_approval_required': _approvalRequired,
         'report_due_days': _dueDays,
         'report_retention_days': _retentionDays,
+        'youth_open_show_points_enabled': _youthOpenShowPointsEnabled,
         'updated_by': _supabase.auth.currentUser?.id,
         'updated_at': DateTime.now().toIso8601String(),
       }, onConflict: 'club_id');
@@ -4810,6 +4829,29 @@ class _SweepstakesParserRulesDialogState
         );
     } finally {
       if (mounted) setState(() => _savingIntake = false);
+    }
+  }
+
+  Future<void> _setYouthOpenShowPointsPolicy(bool enabled) async {
+    if (_savingYouthOpenShowPolicy) return;
+    setState(() => _savingYouthOpenShowPolicy = true);
+    try {
+      await _supabase.from('club_sweepstakes_settings').upsert({
+        'club_id': widget.clubId,
+        'youth_open_show_points_enabled': enabled,
+        'updated_by': _supabase.auth.currentUser?.id,
+        'updated_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'club_id');
+      if (!mounted) return;
+      setState(() => _youthOpenShowPointsEnabled = enabled);
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _errorMessage = 'Unable to save Youth Open-show policy: $error',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingYouthOpenShowPolicy = false);
     }
   }
 
@@ -4868,7 +4910,11 @@ class _SweepstakesParserRulesDialogState
                       children: [
                         Column(
                           children: [
-                            const _YouthOpenPointsPolicyCard(),
+                            _YouthOpenPointsPolicyCard(
+                              enabled: _youthOpenShowPointsEnabled,
+                              isSaving: _savingYouthOpenShowPolicy,
+                              onChanged: _setYouthOpenShowPointsPolicy,
+                            ),
                             Expanded(
                               child: _RulesTable(
                                 rules: _currentRules,
@@ -5034,7 +5080,15 @@ class _SweepstakesParserRulesDialogState
 }
 
 class _YouthOpenPointsPolicyCard extends StatelessWidget {
-  const _YouthOpenPointsPolicyCard();
+  const _YouthOpenPointsPolicyCard({
+    required this.enabled,
+    required this.isSaving,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final bool isSaving;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -5048,9 +5102,18 @@ class _YouthOpenPointsPolicyCard extends StatelessWidget {
           color: colorScheme.onSecondaryContainer,
         ),
         title: const Text('Youth Open-show points policy'),
-        subtitle: const Text(
-          'An active Youth member’s points from an Open show count toward Youth Sweepstakes. Youth members do not appear in Open award boards.',
+        subtitle: Text(
+          enabled
+              ? 'On — an active Youth member’s unassigned Open-show points count toward Youth Sweepstakes. Youth members do not appear in Open award boards.'
+              : 'Off — an active Youth member’s unassigned Open-show points remain in Open Sweepstakes. Explicit Youth-division results remain in Youth.',
         ),
+        trailing: isSaving
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Switch.adaptive(value: enabled, onChanged: onChanged),
       ),
     );
   }
