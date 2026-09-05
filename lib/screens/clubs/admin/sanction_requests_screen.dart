@@ -85,7 +85,7 @@ class _SanctionRequestsScreenState extends State<SanctionRequestsScreen> {
             'id,club_id,sanction_type_id,requesting_club_name,contact_name,'
             'contact_email,contact_phone,show_name,show_date,show_end_date,'
             'location_name,location_address,show_type,sanction_category,'
-            'status,fee_due,amount_paid,currency,payment_status,'
+            'quantity,status,fee_due,amount_paid,currency,payment_status,'
             'sanction_number,applicant_notes,staff_notes,submitted_at,'
             'reviewed_at,created_at',
           )
@@ -746,6 +746,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
   late final TextEditingController _feeDueController;
   late final TextEditingController _amountPaidController;
   late final TextEditingController _currencyController;
+  late final TextEditingController _quantityController;
   late final TextEditingController _sanctionNumberController;
   late final TextEditingController _applicantNotesController;
   late final TextEditingController _staffNotesController;
@@ -798,6 +799,9 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     _currencyController = TextEditingController(
       text: existing?.currency.toUpperCase() ?? 'USD',
     );
+    _quantityController = TextEditingController(
+      text: (existing?.quantity ?? 1).toString(),
+    );
     _sanctionNumberController = TextEditingController(
       text: existing?.sanctionNumber ?? '',
     );
@@ -834,6 +838,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
     _feeDueController.dispose();
     _amountPaidController.dispose();
     _currencyController.dispose();
+    _quantityController.dispose();
     _sanctionNumberController.dispose();
     _applicantNotesController.dispose();
     _staffNotesController.dispose();
@@ -846,7 +851,8 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
   void _applySanctionType(_SanctionType type, {bool updateState = true}) {
     void apply() {
       _sanctionTypeId = type.id;
-      _feeDueController.text = type.basePrice.toStringAsFixed(2);
+      _feeDueController.text = (type.basePrice * _selectedQuantity)
+          .toStringAsFixed(2);
       _currencyController.text = type.currency.toUpperCase();
 
       for (final controller in _sanctionNumberControllers.values) {
@@ -859,6 +865,21 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       setState(apply);
     } else {
       apply();
+    }
+  }
+
+  int get _selectedQuantity {
+    final quantity = int.tryParse(_quantityController.text.trim());
+    return quantity == null || quantity < 1 ? 1 : quantity;
+  }
+
+  void _updateFeeForQuantity() {
+    final type = widget.sanctionTypes
+        .where((type) => type.id == _sanctionTypeId)
+        .firstOrNull;
+    if (type != null) {
+      _feeDueController.text = (type.basePrice * _selectedQuantity)
+          .toStringAsFixed(2);
     }
   }
 
@@ -915,6 +936,7 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       'location_address': _nullIfBlank(_locationAddressController.text),
       'show_type': _showType,
       'sanction_category': _sanctionCategory,
+      'quantity': _selectedQuantity,
       'status': _status,
       'fee_due': double.tryParse(_feeDueController.text.trim()) ?? 0,
       'amount_paid': _recordedAmountPaid(),
@@ -1169,6 +1191,9 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
       }
     }
 
+    openCount *= _selectedQuantity;
+    youthCount *= _selectedQuantity;
+
     final slots = <_SanctionNumberSlot>[];
 
     for (var index = 1; index <= youthCount; index++) {
@@ -1326,6 +1351,28 @@ class _SanctionRequestDialogState extends State<_SanctionRequestDialog> {
                   validator: (value) => value == null || value.isEmpty
                       ? 'Select a sanction type.'
                       : null,
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _quantityController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'How many of this sanction type?',
+                    helperText:
+                        'A matching sanction-number field is shown for each included show.',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    final quantity = int.tryParse(value?.trim() ?? '');
+                    if (quantity == null || quantity < 1) {
+                      return 'Enter a quantity of 1 or more.';
+                    }
+                    return null;
+                  },
+                  onChanged: (_) {
+                    _updateFeeForQuantity();
+                    setState(() {});
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
@@ -1638,6 +1685,7 @@ class _SanctionRequest {
     required this.amountPaid,
     required this.currency,
     required this.paymentStatus,
+    required this.quantity,
     this.contactEmail,
     this.contactPhone,
     this.showEndDate,
@@ -1669,6 +1717,7 @@ class _SanctionRequest {
   final double amountPaid;
   final String currency;
   final String paymentStatus;
+  final int quantity;
   final String? sanctionNumber;
   final String? applicantNotes;
   final String? staffNotes;
@@ -1707,6 +1756,9 @@ class _SanctionRequest {
       amountPaid: _doubleValue(json['amount_paid']),
       currency: _nullableString(json['currency']) ?? 'usd',
       paymentStatus: _nullableString(json['payment_status']) ?? 'unpaid',
+      quantity: _intValue(json['quantity']) < 1
+          ? 1
+          : _intValue(json['quantity']),
       sanctionNumber: _nullableString(json['sanction_number']),
       applicantNotes: _nullableString(json['applicant_notes']),
       staffNotes: _nullableString(json['staff_notes']),

@@ -148,8 +148,9 @@ class _ClubMembersScreenState extends State<ClubMembersScreen> {
         'all' => true,
         // Memberships are normally kept active until their term actually
         // ends, so the Expiring view must derive this from the end date.
-        'expiring' => member.status == 'expiring' ||
-            (member.status == 'active' && expiresSoon),
+        'expiring' =>
+          member.status == 'expiring' ||
+              (member.status == 'active' && expiresSoon),
         _ => member.status == _statusFilter,
       };
 
@@ -1904,6 +1905,7 @@ List<Map<String, Object?>> parseMembershipRosterForTesting({
         'category': row.membershipCategory,
         'firstName': row.firstName,
         'lastName': row.lastName,
+        'expiration': _dateStorageValue(row.expireDate),
         'status': row.importStatus,
         'address': row.address,
         'linkedPeople': row.linkedPeople,
@@ -1919,10 +1921,15 @@ const _rosterAliases = <String, Set<String>>{
   'expiration': {
     'expiration',
     'expirationdate',
+    'membershipexpiration',
+    'membershipexpirationdate',
+    'expdate',
     'expiredate',
     'expiry',
     'expirydate',
     'expires',
+    'termend',
+    'termenddate',
   },
   'status': {'activeinactive', 'status', 'membershipstatus'},
   'youth': {'youth', 'isyouth', 'youthmember'},

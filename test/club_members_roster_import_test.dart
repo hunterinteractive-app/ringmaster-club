@@ -25,6 +25,7 @@ Jamie Jones,,5/7/2028,YOUTH,200 Oak St,Salem,IN,47167,,Active
 
       expect(rows, hasLength(4));
       expect(rows[0]['category'], 'Individual');
+      expect(rows[0]['expiration'], '2028-05-07');
       expect(rows[0]['status'], 'active');
       expect(rows[1]['category'], 'Family');
       expect(rows[1]['status'], 'inactive');
@@ -43,4 +44,18 @@ Jamie Jones,,5/7/2028,YOUTH,200 Oak St,Salem,IN,47167,,Active
       expect(rows[3]['category'], 'Youth');
     },
   );
+
+  test('imports common expiration-date header aliases', () {
+    final rows = parseMembershipRosterForTesting(
+      extension: 'csv',
+      bytes: Uint8List.fromList(
+        utf8.encode('''First Name,Last Name,Exp Date,Membership
+Jane,Doe,09/10/2026,Individual
+'''),
+      ),
+    );
+
+    expect(rows, hasLength(1));
+    expect(rows.single['expiration'], '2026-09-10');
+  });
 }
