@@ -2,6 +2,14 @@ import "@supabase/functions-js/edge-runtime.d.ts";
 
 type JsonObject = Record<string, unknown>;
 
+type DownloadedAttachment = {
+  id: string;
+  fileName: string;
+  contentType: string;
+  size: number | null;
+  body: ArrayBuffer;
+};
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
@@ -34,25 +42,18 @@ Deno.serve(async (request) => {
   const club = await enabledClub(recipient);
   if (!club) return respond({ received: true, ignored: true });
 
-  const duplicate = await existingPackage(emailId);
-  if (duplicate) return respond({ received: true, duplicate: true, package_id: duplicate });
+  const duplicates = await existingPackages(emailId);
+  if (duplicates.length) {
+    return respond({ received: true, duplicate: true, package_ids: duplicates });
+  }
 
   const email = objectData(await resendJson(`/emails/receiving/${emailId}`));
-  const packageId = await createPackage({
-    clubId: club.id,
-    emailId,
-    // Resend's received-email response may expose the subject either at the
-    // top level or only in the preserved message headers. Use both so the
-    // review inbox identifies a forwarded report by its original subject.
-    subject: emailSubject(email) ?? emailSubject(data),
-    sender: stringValue(email.from) ?? stringValue(data.from),
-    receivedAt: stringValue(email.created_at) ?? stringValue(data.created_at) ?? new Date().toISOString(),
-  });
 
+  const subject = emailSubject(email) ?? emailSubject(data);
+  const sender = stringValue(email.from) ?? stringValue(data.from);
+  const receivedAt = stringValue(email.created_at) ?? stringValue(data.created_at) ?? new Date().toISOString();
+  const packageIds: string[] = [];
   try {
-    const basePath = `sweepstakes-reports/${packageId}`;
-    await uploadJson(club.bucket, `${basePath}/source-email.json`, retainedEmail(email));
-    const manifest: JsonObject[] = [];
     // Resend can make the attachment list available shortly after the
     // email-received event. The retrieved email itself also contains the
     // attachment metadata, so use it as a fallback rather than dropping files.
@@ -62,6 +63,7 @@ Deno.serve(async (request) => {
     const attachments = listedAttachments.length
       ? listedAttachments
       : arrayData(email.attachments);
+    const downloaded: DownloadedAttachment[] = [];
     for (const attachment of attachments) {
       const attachmentId = stringValue(attachment.id);
       if (!attachmentId) continue;
@@ -71,46 +73,63 @@ Deno.serve(async (request) => {
       const fileName = safeFileName(
         stringValue(attachmentDetail.filename) ??
             stringValue(attachment.filename) ??
-            `attachment-${attachmentId}`,
+          `attachment-${attachmentId}`,
       );
-      const storagePath = `${basePath}/attachments/${fileName}`;
       const downloadUrl =
         stringValue(attachmentDetail.download_url) ??
         stringValue(attachment.download_url);
       if (!downloadUrl) {
         throw new Error(`Resend did not provide a download URL for ${fileName}.`);
       }
-      const file = await downloadResendFile(downloadUrl);
-      await uploadFile(
-        club.bucket,
-        storagePath,
-        file,
-        stringValue(attachmentDetail.content_type) ??
-            stringValue(attachment.content_type) ??
-            "application/octet-stream",
-      );
-      manifest.push({
-        provider_attachment_id: attachmentId,
-        file_name: fileName,
-        content_type:
-          stringValue(attachmentDetail.content_type) ??
-          stringValue(attachment.content_type),
+      downloaded.push({
+        id: attachmentId,
+        fileName,
+        contentType: stringValue(attachmentDetail.content_type) ??
+          stringValue(attachment.content_type) ?? "application/octet-stream",
         size: numberValue(attachmentDetail.size) ?? numberValue(attachment.size),
-        storage_path: storagePath,
+        body: await downloadResendFile(downloadUrl),
       });
     }
-    await updatePackage(packageId, {
-      storage_path: `${basePath}/source-email.json`,
-      attachment_manifest: manifest,
-    });
-    return respond({ received: true, package_id: packageId, attachments: manifest.length });
+
+    // A single forwarded email can contain multiple shows. Keep files for a
+    // show together, so each group can be matched and drafted independently.
+    for (const [groupKey, groupAttachments] of attachmentGroups(downloaded)) {
+      const packageId = await createPackage({
+        clubId: club.id,
+        emailId,
+        groupKey,
+        subject: subjectForGroup(subject, groupKey),
+        sender,
+        receivedAt,
+      });
+      packageIds.push(packageId);
+      const basePath = `sweepstakes-reports/${packageId}`;
+      await uploadJson(club.bucket, `${basePath}/source-email.json`, retainedEmail(email));
+      const manifest: JsonObject[] = [];
+      for (const attachment of groupAttachments) {
+        const storagePath = `${basePath}/attachments/${attachment.fileName}`;
+        await uploadFile(club.bucket, storagePath, attachment.body, attachment.contentType);
+        manifest.push({
+          provider_attachment_id: attachment.id,
+          file_name: attachment.fileName,
+          content_type: attachment.contentType,
+          size: attachment.size,
+          storage_path: storagePath,
+        });
+      }
+      await updatePackage(packageId, {
+        storage_path: `${basePath}/source-email.json`,
+        attachment_manifest: manifest,
+      });
+    }
+    return respond({ received: true, package_ids: packageIds, attachments: downloaded.length });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await updatePackage(packageId, {
+    await Promise.all(packageIds.map((packageId) => updatePackage(packageId, {
       status: "needs_review",
       review_notes: `Inbound retrieval needs attention: ${message}`.slice(0, 1800),
-    });
-    return respond({ received: true, package_id: packageId, needs_review: true });
+    })));
+    return respond({ received: true, package_ids: packageIds, needs_review: true });
   }
 });
 
@@ -134,16 +153,17 @@ async function enabledClub(slug: string) {
   return Array.isArray(settings) && settings.length ? { id, bucket } : null;
 }
 
-async function existingPackage(emailId: string) {
+async function existingPackages(emailId: string) {
   const url = new URL(`${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`);
   url.searchParams.set("select", "id");
   url.searchParams.set("source_provider_message_id", `eq.${emailId}`);
-  url.searchParams.set("limit", "1");
   const rows = await databaseJson(url);
-  return Array.isArray(rows) ? stringValue(objectValue(rows[0]).id) : null;
+  return Array.isArray(rows)
+    ? rows.map(objectValue).map((row) => stringValue(row.id)).filter((id): id is string => Boolean(id))
+    : [];
 }
 
-async function createPackage(input: { clubId: string; emailId: string; subject: string | null; sender: string | null; receivedAt: string }) {
+async function createPackage(input: { clubId: string; emailId: string; groupKey: string; subject: string | null; sender: string | null; receivedAt: string }) {
   const response = await fetch(`${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`, {
     method: "POST",
     headers: { ...dbHeaders, Prefer: "return=representation" },
@@ -154,6 +174,7 @@ async function createPackage(input: { clubId: string; emailId: string; subject: 
       source_sender_email: input.sender,
       source_received_at: input.receivedAt,
       source_provider_message_id: input.emailId,
+      source_provider_group_key: input.groupKey,
       status: "pending",
     }),
   });
@@ -258,6 +279,41 @@ function parseJson<T>(value: string): T | null { try { return JSON.parse(value) 
 function stringValue(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function numberValue(value: unknown) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function safeFileName(value: string) { return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180) || "attachment"; }
+
+function attachmentGroups(attachments: DownloadedAttachment[]) {
+  const groups = new Map<string, DownloadedAttachment[]>();
+  for (const attachment of attachments) {
+    const key = attachmentGroupKey(attachment.fileName);
+    const existing = groups.get(key) ?? [];
+    existing.push(attachment);
+    groups.set(key, existing);
+  }
+  if (!groups.size) return new Map([["email", []]]);
+  // Ordinary messages are still a single package. Only create a separate
+  // catch-all package when the email contains two or more identifiable shows.
+  const identified = [...groups.keys()].filter((key) => key !== "email");
+  if (identified.length < 2 && groups.has("email")) {
+    const combined = [...groups.values()].flat();
+    return new Map([["email", combined]]);
+  }
+  return groups;
+}
+
+function attachmentGroupKey(fileName: string) {
+  const name = fileName.toUpperCase();
+  // Sanction IDs are the most precise signal and cover Grand Champion files.
+  const sanction = name.match(/(?:^|[_\-. ])([A-Z]{2,6}\d{3,})(?:[_\-. ]|$)/);
+  if (sanction) return `sanction-${sanction[1]}`.toLowerCase();
+  // RingMaster Show commonly uses report names such as OPEN_A or YOUTH_B.
+  const divisionShow = name.match(/(?:^|[_\-. ])(OPEN|YOUTH)[_\-. ]([A-F])(?:[_\-. ]|$)/);
+  if (divisionShow) return `${divisionShow[1]}-${divisionShow[2]}`.toLowerCase();
+  return "email";
+}
+
+function subjectForGroup(subject: string | null, groupKey: string) {
+  if (!subject || groupKey === "email") return subject;
+  return `${subject} — ${groupKey.replace(/^sanction-/, "").toUpperCase()}`;
+}
 function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 async function verifyWebhook(request: Request, payload: string) {
