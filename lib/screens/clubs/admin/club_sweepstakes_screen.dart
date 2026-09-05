@@ -60,6 +60,65 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
     if (mounted) setState(() {});
   }
 
+  bool _isCurrentMembership(Map<String, dynamic> membership) {
+    final termEnd = _nullableDate(membership['current_term_end']);
+    if (termEnd == null) return true;
+    return !DateUtils.dateOnly(
+      termEnd,
+    ).isBefore(DateUtils.dateOnly(DateTime.now()));
+  }
+
+  Map<String, dynamic>? _activeMembershipForStanding(
+    Map<String, dynamic> standing,
+    List<Map<String, dynamic>> activeMemberships,
+  ) {
+    final membershipNumber = _nullableString(standing['membership_number']);
+    final exhibitorName = _nullableString(standing['exhibitor_name']) ?? '';
+
+    for (final member in activeMemberships) {
+      final memberNumber = _nullableString(member['membership_number']);
+      if (membershipNumber != null && memberNumber == membershipNumber) {
+        return member;
+      }
+
+      final showingName = _nullableString(member['showing_name']);
+      final fullName = [
+        _nullableString(member['first_name']),
+        _nullableString(member['last_name']),
+      ].whereType<String>().join(' ');
+      if (_sweepstakesNamesMatch(showingName, exhibitorName) ||
+          _sweepstakesNamesMatch(fullName, exhibitorName)) {
+        return member;
+      }
+    }
+    return null;
+  }
+
+  String _preferredExhibitorName(Map<String, dynamic> member) {
+    final fullName = [
+      _nullableString(member['first_name']),
+      _nullableString(member['last_name']),
+    ].whereType<String>().join(' ');
+    return fullName.isEmpty
+        ? _nullableString(member['showing_name']) ?? 'Unknown Exhibitor'
+        : fullName;
+  }
+
+  _SweepstakesDivision? _divisionForMembership(
+    Map<String, dynamic> member,
+    String? seasonId,
+  ) {
+    final isYouth = (_nullableString(member['membership_type_name']) ?? '')
+        .toLowerCase()
+        .contains('youth');
+    final target = isYouth ? 'youth' : 'open';
+    return _divisions.where((division) {
+      if (division.seasonId != seasonId) return false;
+      final label = '${division.name} ${division.code ?? ''}'.toLowerCase();
+      return label.contains(target);
+    }).firstOrNull;
+  }
+
   _SweepstakesSeason? get _selectedSeason {
     for (final season in _seasons) {
       if (season.id == _selectedSeasonId) return season;
@@ -193,6 +252,22 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           )
           .eq('club_id', widget.club.clubId);
 
+      // Standings are retained for audit history, but the staff standings
+      // table must only present exhibitors with a current active membership.
+      final activeMembershipsResponse = await _supabase
+          .from('club_memberships')
+          .select(
+            'membership_number,membership_type_id,showing_name,first_name,last_name,'
+            'current_term_end',
+          )
+          .eq('club_id', widget.club.clubId)
+          .eq('status', 'active');
+
+      final membershipTypesResponse = await _supabase
+          .from('club_membership_types')
+          .select('id,name')
+          .eq('club_id', widget.club.clubId);
+
       final adjustmentsResponse = await _supabase
           .from('club_sweepstakes_adjustments')
           .select(
@@ -254,14 +329,48 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
         for (final division in divisions) division.id: division,
       };
 
-      final standings = (standingsResponse as List).whereType<Map>().map((row) {
-        final json = Map<String, dynamic>.from(row);
-        final divisionId = json['division_id']?.toString();
-        return _SweepstakesStanding.fromJson(
-          json,
-          division: divisionId == null ? null : divisionMap[divisionId],
-        );
-      }).toList();
+      final membershipTypeNames = <String, String>{
+        for (final row in (membershipTypesResponse as List).whereType<Map>())
+          row['id'].toString(): _nullableString(row['name']) ?? '',
+      };
+      final activeMemberships = (activeMembershipsResponse as List)
+          .whereType<Map>()
+          .map((row) {
+            final membership = Map<String, dynamic>.from(row);
+            membership['membership_type_name'] =
+                membershipTypeNames[membership['membership_type_id']
+                    ?.toString()] ??
+                '';
+            return membership;
+          })
+          .where(_isCurrentMembership)
+          .toList();
+
+      final standings = (standingsResponse as List)
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .map(
+            (standing) => (
+              standing: standing,
+              member: _activeMembershipForStanding(standing, activeMemberships),
+            ),
+          )
+          .where((match) => match.member != null)
+          .map((match) {
+            final json = match.standing;
+            final member = match.member!;
+            final divisionId = json['division_id']?.toString();
+            final division = divisionId == null
+                ? _divisionForMembership(member, json['season_id']?.toString())
+                : divisionMap[divisionId];
+            return _SweepstakesStanding.fromJson(
+              json,
+              division: division,
+              divisionIdOverride: divisionId ?? division?.id,
+              exhibitorNameOverride: _preferredExhibitorName(member),
+            );
+          })
+          .toList();
 
       final adjustments = (adjustmentsResponse as List)
           .whereType<Map>()
@@ -2791,17 +2900,13 @@ class _ManualSweepstakesReportUploadDialogState
 
   Future<void> _save() async {
     if (_isSaving) return;
-    if (_files.isEmpty) {
-      setState(() => _errorMessage = 'Choose at least one report file.');
-      return;
-    }
     setState(() {
       _isSaving = true;
       _errorMessage = null;
     });
     try {
-      final bucket = await _bucket();
-      if (_archiveMode) {
+      final bucket = _files.isEmpty ? null : await _bucket();
+      if (_archiveMode && _files.isNotEmpty) {
         var created = 0;
         for (final entry in _archiveGroups.entries) {
           await _savePackage(bucket, entry.value, entry.key, null);
@@ -2849,7 +2954,7 @@ class _ManualSweepstakesReportUploadDialogState
   }
 
   Future<void> _savePackage(
-    String bucket,
+    String? bucket,
     List<PlatformFile> files,
     String subject,
     String? expectedReportId,
@@ -2875,6 +2980,9 @@ class _ManualSweepstakesReportUploadDialogState
       if (bytes == null) {
         continue;
       }
+      if (bucket == null) {
+        throw StateError('A storage bucket is required when attaching files.');
+      }
       final name = _safeFileName(file.name);
       final storagePath = 'sweepstakes-reports/$packageId/attachments/$name';
       await _supabase.storage
@@ -2893,9 +3001,6 @@ class _ManualSweepstakesReportUploadDialogState
         'size': bytes.length,
         'storage_path': storagePath,
       });
-    }
-    if (manifest.isEmpty) {
-      throw Exception('None of the selected files could be uploaded.');
     }
     await _supabase
         .from('club_sweepstakes_report_packages')
@@ -2938,8 +3043,8 @@ class _ManualSweepstakesReportUploadDialogState
                 icon: const Icon(Icons.upload_file_outlined),
                 label: Text(
                   _files.isEmpty
-                      ? 'Choose report files'
-                      : 'Change report files',
+                      ? 'Attach report files (optional)'
+                      : 'Change attached files',
                 ),
               ),
               if (_files.isNotEmpty) ...[
@@ -2952,7 +3057,7 @@ class _ManualSweepstakesReportUploadDialogState
               ],
               CheckboxListTile(
                 value: _archiveMode,
-                onChanged: _isSaving
+                onChanged: _isSaving || _files.isEmpty
                     ? null
                     : (value) => setState(() => _archiveMode = value ?? false),
                 title: const Text('Sort selected files into report packages'),
@@ -3007,7 +3112,7 @@ class _ManualSweepstakesReportUploadDialogState
               ),
               const SizedBox(height: 12),
               const Text(
-                'Uploads are private and always enter review. They cannot update standings automatically.',
+                'Attachments are optional. Every package stays in staff review and cannot update standings automatically.',
               ),
             ],
           ),
@@ -3021,7 +3126,13 @@ class _ManualSweepstakesReportUploadDialogState
         FilledButton.icon(
           onPressed: _isSaving ? null : _save,
           icon: const Icon(Icons.upload_outlined),
-          label: Text(_isSaving ? 'Uploading...' : 'Upload for review'),
+          label: Text(
+            _isSaving
+                ? 'Saving...'
+                : _files.isEmpty
+                ? 'Create for review'
+                : 'Upload for review',
+          ),
         ),
       ],
     );
@@ -7198,14 +7309,18 @@ class _SweepstakesStanding {
   factory _SweepstakesStanding.fromJson(
     Map<String, dynamic> json, {
     _SweepstakesDivision? division,
+    String? divisionIdOverride,
+    String? exhibitorNameOverride,
   }) {
     return _SweepstakesStanding(
       id: json['id'].toString(),
       seasonId: json['season_id'].toString(),
-      divisionId: _nullableString(json['division_id']),
+      divisionId: divisionIdOverride ?? _nullableString(json['division_id']),
       divisionName: division?.name,
       exhibitorName:
-          _nullableString(json['exhibitor_name']) ?? 'Unknown Exhibitor',
+          exhibitorNameOverride ??
+          _nullableString(json['exhibitor_name']) ??
+          'Unknown Exhibitor',
       membershipNumber: _nullableString(json['membership_number']),
       species: _nullableString(json['species']),
       breed: _nullableString(json['breed']),
@@ -7495,6 +7610,24 @@ class _InlineEmptyState extends StatelessWidget {
 String? _nullableString(dynamic value) {
   final text = value?.toString().trim();
   return text == null || text.isEmpty ? null : text;
+}
+
+bool _sweepstakesNamesMatch(String? memberName, String exhibitorName) {
+  String normalize(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
+  final member = normalize(memberName ?? '');
+  final exhibitor = normalize(exhibitorName);
+  if (member.isEmpty || exhibitor.isEmpty) return false;
+  if (member == exhibitor) return true;
+
+  final exhibitorWords = exhibitor.split(' ');
+  if (exhibitorWords.length < 2) return false;
+  final reversedExhibitor = [
+    ...exhibitorWords.skip(1),
+    exhibitorWords.first,
+  ].join(' ');
+  return member == reversedExhibitor;
 }
 
 DateTime? _nullableDate(dynamic value) {
