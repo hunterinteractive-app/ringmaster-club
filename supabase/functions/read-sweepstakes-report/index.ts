@@ -209,6 +209,8 @@ Deno.serve(async (request) => {
     const rules = await activeRules(clubId);
     let rawTotals = source === "easy2show"
       ? await readEasy2ShowTotalsFromPdf(totalsPdf)
+      : source === "grand_champion"
+      ? await readGrandChampionTotalsFromPdf(totalsPdf)
       : await readTotalsWithGemini(
         totalsPdf,
         stringValue(totalsAttachment.file_name) ?? "exhibitor-totals.pdf",
@@ -250,6 +252,11 @@ Deno.serve(async (request) => {
     }
     const detailedAwards = source === "easy2show" && localEasy2ShowAwards.length
       ? normalizeDetailedAwards(localEasy2ShowAwards, rules)
+      // Grand Champion's Points export contains explicit exhibitor totals.
+      // Keep those review rows available even when the optional placement
+      // reader is unavailable; staff can inspect its paired Placement PDF.
+      : source === "grand_champion" && rawTotals.length
+      ? []
       : detailsPdf && detailsAttachment
       ? normalizeDetailedAwards(
         await readDetailedAwardsWithGemini(
@@ -473,6 +480,42 @@ async function readEasy2ShowShowAwardsFromPdf(pdf: ArrayBuffer): Promise<JsonObj
     }
   }
   return awards;
+}
+
+async function readGrandChampionTotalsFromPdf(pdf: ArrayBuffer): Promise<JsonObject[]> {
+  const document = await pdfjs.getDocument({ data: new Uint8Array(pdf) }).promise;
+  const rows: JsonObject[] = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const content = await (await document.getPage(pageNumber)).getTextContent();
+    const lineFragments = new Map<number, { x: number; text: string }[]>();
+    for (const item of content.items) {
+      const candidate = item as { str?: unknown; transform?: unknown };
+      const text = stringValue(candidate.str);
+      const transform = Array.isArray(candidate.transform) ? candidate.transform : [];
+      const x = numberValue(transform[4]);
+      const y = numberValue(transform[5]);
+      if (!text || x == null || y == null) continue;
+      const line = Math.round(y);
+      lineFragments.set(line, [...(lineFragments.get(line) ?? []), { x, text }]);
+    }
+    for (const fragments of lineFragments.values()) {
+      const sourcePoints = fragments
+        .filter((fragment) => fragment.x >= 25 && fragment.x < 145)
+        .map((fragment) => numberValue(fragment.text))
+        .find((value): value is number => value != null && value > 0);
+      const exhibitorName = fragments
+        .filter((fragment) => fragment.x >= 145 && fragment.x < 440)
+        .sort((a, b) => a.x - b.x)
+        .map((fragment) => fragment.text)
+        .join(" ")
+        .replace(/\s+\d.*$/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!sourcePoints || !exhibitorName.includes(",") || !/[a-z]/.test(exhibitorName)) continue;
+      rows.push({ exhibitor_name: exhibitorName, source_points: sourcePoints });
+    }
+  }
+  return rows;
 }
 
 async function readTotalsWithGemini(
