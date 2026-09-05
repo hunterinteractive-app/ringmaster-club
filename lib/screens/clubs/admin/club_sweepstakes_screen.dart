@@ -3921,6 +3921,7 @@ class _SweepstakesResultDraftDialogState
   bool _isLoading = true;
   bool _isSaving = false;
   String? _errorMessage;
+  String? _statusMessage;
 
   @override
   void initState() {
@@ -4002,6 +4003,7 @@ class _SweepstakesResultDraftDialogState
     setState(() {
       _isSaving = true;
       _errorMessage = null;
+      _statusMessage = null;
     });
     try {
       final response = await _supabase.functions.invoke(
@@ -4015,17 +4017,14 @@ class _SweepstakesResultDraftDialogState
       final breedCountsNote = data['breed_counts_note'] as String?;
       final sourceLabel = data['source_label'] as String? ?? 'Report';
       final reviewMessage = data['review_message'] as String?;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
+      setState(() {
+        _statusMessage =
             reviewMessage ??
-                (breedCountsAdded > 0
-                    ? '$sourceLabel: $breedCountsAdded breed ${breedCountsAdded == 1 ? 'count was' : 'counts were'} added to Show obligations.'
-                    : breedCountsNote ??
-                          '$sourceLabel results draft is ready for review.'),
-          ),
-        ),
-      );
+            (breedCountsAdded > 0
+                ? '$sourceLabel: $breedCountsAdded breed ${breedCountsAdded == 1 ? 'count was' : 'counts were'} added to Show obligations.'
+                : breedCountsNote ??
+                      '$sourceLabel results draft is ready for review.');
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() => _errorMessage = 'Unable to read the report draft: $error');
@@ -4348,6 +4347,24 @@ class _SweepstakesResultDraftDialogState
                       _errorMessage!,
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  if (_statusMessage != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _statusMessage!,
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onPrimaryContainer,
+                        ),
                       ),
                     ),
                   ],
