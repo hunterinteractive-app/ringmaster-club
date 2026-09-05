@@ -4009,24 +4009,20 @@ class _SweepstakesResultDraftDialogState
         body: {'import_id': widget.import.id},
       );
       final data = Map<String, dynamic>.from(response.data as Map? ?? const {});
-      final added = data['rows_added'];
-      if (added is! num || added <= 0) {
-        throw Exception(
-          'No rule-supported results could be safely identified.',
-        );
-      }
       await _load();
       if (!mounted) return;
       final breedCountsAdded = data['breed_counts_added'] as num? ?? 0;
       final breedCountsNote = data['breed_counts_note'] as String?;
       final sourceLabel = data['source_label'] as String? ?? 'Report';
+      final reviewMessage = data['review_message'] as String?;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            breedCountsAdded > 0
-                ? '$sourceLabel: $breedCountsAdded breed ${breedCountsAdded == 1 ? 'count was' : 'counts were'} added to Show obligations.'
-                : breedCountsNote ??
-                      '$sourceLabel results draft is ready for review.',
+            reviewMessage ??
+                (breedCountsAdded > 0
+                    ? '$sourceLabel: $breedCountsAdded breed ${breedCountsAdded == 1 ? 'count was' : 'counts were'} added to Show obligations.'
+                    : breedCountsNote ??
+                          '$sourceLabel results draft is ready for review.'),
           ),
         ),
       );

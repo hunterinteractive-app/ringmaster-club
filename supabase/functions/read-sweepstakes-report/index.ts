@@ -207,13 +207,23 @@ Deno.serve(async (request) => {
     }
 
     const rules = await activeRules(clubId);
-    const rawTotals = source === "easy2show"
+    let rawTotals = source === "easy2show"
       ? await readEasy2ShowTotalsFromPdf(totalsPdf)
       : await readTotalsWithGemini(
         totalsPdf,
         stringValue(totalsAttachment.file_name) ?? "exhibitor-totals.pdf",
         profile,
-    );
+      );
+    // Easy2Show's layout differs between report variants. When its compact
+    // table reader cannot identify totals, use the secure general reader on
+    // the same uploaded PDF rather than failing the staff-review workflow.
+    if (source === "easy2show" && !rawTotals.length) {
+      rawTotals = await readTotalsWithGemini(
+        totalsPdf,
+        stringValue(totalsAttachment.file_name) ?? "easy2show-report.pdf",
+        profile,
+      );
+    }
     let totalRows = normalizeTotals(rawTotals, rules);
     if (source === "easy2show") {
       await deleteInvalidEasy2ShowFooterRows(importId);
@@ -256,8 +266,14 @@ Deno.serve(async (request) => {
     const rows = calculateResults(totalRows, detailedAwards, rules, usedAwardFallback);
     if (!rows.length) {
       return respond({
-        error: `No class-placement results could be safely identified in this ${profile.label} report. Please add verified results manually.`,
-      }, 422);
+        rows_added: 0,
+        source_points_updated: 0,
+        breed_counts_added: 0,
+        breed_counts_note: null,
+        source_label: profile.label,
+        needs_review: true,
+        review_message: `No results could be identified automatically in this ${profile.label} report. Add verified results manually to continue.`,
+      });
     }
 
     // Retrying secure report reading replaces only unreviewed draft rows. It
