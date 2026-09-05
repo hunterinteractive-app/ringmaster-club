@@ -41,7 +41,10 @@ Deno.serve(async (request) => {
   const packageId = await createPackage({
     clubId: club.id,
     emailId,
-    subject: stringValue(email.subject) ?? stringValue(data.subject),
+    // Resend's received-email response may expose the subject either at the
+    // top level or only in the preserved message headers. Use both so the
+    // review inbox identifies a forwarded report by its original subject.
+    subject: emailSubject(email) ?? emailSubject(data),
     sender: stringValue(email.from) ?? stringValue(data.from),
     receivedAt: stringValue(email.created_at) ?? stringValue(data.created_at) ?? new Date().toISOString(),
   });
@@ -214,6 +217,30 @@ function forwardingSlug(value: unknown) {
 function retainedEmail(email: JsonObject) {
   const allowed = ["id", "from", "to", "cc", "subject", "created_at", "text", "html", "headers"];
   return Object.fromEntries(allowed.filter((key) => key in email).map((key) => [key, email[key]]));
+}
+
+function emailSubject(email: JsonObject) {
+  const directSubject = stringValue(email.subject);
+  if (directSubject) return directSubject;
+
+  const headers = email.headers;
+  if (Array.isArray(headers)) {
+    for (const header of headers) {
+      const item = objectValue(header);
+      const name = stringValue(item.name) ?? stringValue(item.key);
+      if (name?.toLowerCase() === "subject") {
+        const subject = stringValue(item.value);
+        if (subject) return subject;
+      }
+    }
+    return null;
+  }
+
+  const headerMap = objectValue(headers);
+  for (const [name, value] of Object.entries(headerMap)) {
+    if (name.toLowerCase() === "subject") return stringValue(value);
+  }
+  return null;
 }
 
 function objectData(value: unknown) {
