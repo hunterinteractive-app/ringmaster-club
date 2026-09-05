@@ -59,8 +59,14 @@ const reportProfiles: Record<ReportSource, ReportProfile> = {
   easy2show: {
     key: "easy2show",
     label: "Easy2Show",
-    totalsHints: ["exh_total_points", "exh_by_breed"],
-    awardsHints: ["details_by_breed"],
+    totalsHints: [
+      "exh_total_points", "exh_by_breed", "specialtyclubpoints",
+      "specialty club points", "sweepstakes_report", "sweepstakes report",
+    ],
+    awardsHints: [
+      "details_by_breed", "breed_results_detail", "breed results detail",
+      "specialtyclubplacement", "specialty club placement",
+    ],
     breedCountHints: ["exh_by_breed"],
     totalsGuidance:
       "Use the Exhibitor / Address table and copy only the Total column for each exhibitor.",
@@ -177,7 +183,8 @@ Deno.serve(async (request) => {
     const totalsAttachment = findAttachment(attachments, profile.totalsHints) ??
       (source === "easy2show"
         ? findAttachment(attachments, ["exh_by_breed"])
-        : pdfAttachments[0]);
+        : undefined) ??
+      pdfAttachments[0];
     const detailsAttachment = findAttachment(attachments, profile.awardsHints) ??
       (source === "easy2show" ? undefined : totalsAttachment);
     // Easy2Show exports are not always delivered as a matching pair. Its
