@@ -5,7 +5,7 @@ type JsonObject = Record<string, unknown>;
 type ExhibitorTotal = {
   exhibitorName: string;
   breed: string | null;
-  sourcePoints: number;
+  sourcePoints: number | null;
 };
 type BreedCount = {
   breed: string;
@@ -454,8 +454,11 @@ async function readEasy2ShowShowAwardsFromPdf(pdf: ArrayBuffer): Promise<JsonObj
     for (const fragments of lineFragments.values()) {
       const ordered = fragments.sort((a, b) => a.x - b.x);
       const columns = [
-        { placeStart: 25, placeEnd: 80, nameStart: 105, nameEnd: 295 },
-        { placeStart: 300, placeEnd: 350, nameStart: 390, nameEnd: 590 },
+        // A Show Report has two class tables on each line. Ear numbers sit
+        // immediately before the exhibitor columns; begin after them so an
+        // ear tag like KC7B1 can never become part of a person's name.
+        { placeStart: 25, placeEnd: 80, nameStart: 170, nameEnd: 295 },
+        { placeStart: 300, placeEnd: 350, nameStart: 440, nameEnd: 590 },
       ];
       for (const column of columns) {
         const place = ordered
@@ -853,7 +856,10 @@ function totalsFromDetailedAwards(awards: DetailedAward[]): ExhibitorTotal[] {
     seen.set(key, {
       exhibitorName: award.exhibitorName,
       breed: award.breed,
-      sourcePoints: 0,
+      // A Show Report lists placements, not exhibitor point totals. Leave
+      // this blank so the review UI does not label a calculated score as a
+      // false source-point mismatch.
+      sourcePoints: null,
     });
   }
   return [...seen.values()];
