@@ -107,12 +107,13 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
   _SweepstakesDivision? _divisionForMembership(
     Map<String, dynamic> member,
     String? seasonId,
+    List<_SweepstakesDivision> divisions,
   ) {
     final isYouth = (_nullableString(member['membership_type_name']) ?? '')
         .toLowerCase()
         .contains('youth');
     final target = isYouth ? 'youth' : 'open';
-    return _divisions.where((division) {
+    return divisions.where((division) {
       if (division.seasonId != seasonId) return false;
       final label = '${division.name} ${division.code ?? ''}'.toLowerCase();
       return label.contains(target);
@@ -361,7 +362,11 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
             final member = match.member!;
             final divisionId = json['division_id']?.toString();
             final division = divisionId == null
-                ? _divisionForMembership(member, json['season_id']?.toString())
+                ? _divisionForMembership(
+                    member,
+                    json['season_id']?.toString(),
+                    divisions,
+                  )
                 : divisionMap[divisionId];
             return _SweepstakesStanding.fromJson(
               json,
