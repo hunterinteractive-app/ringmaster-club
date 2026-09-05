@@ -289,9 +289,10 @@ Deno.serve(async (request) => {
       });
     }
 
-    // Retrying secure report reading replaces only unreviewed draft rows. It
-    // never overwrites staff-approved or rejected work.
-    await deletePendingRows(importId);
+    // Re-reading replaces the prior automated review output instead of
+    // stacking another pass beneath it. Approved rows remain protected; a
+    // rejected row is safe to replace because it has not been applied.
+    await deleteReplaceableRows(importId);
     await insertRows(importId, clubId, rows);
 
     // Breed counts are helpful for ISRBA's per-show obligations, but they are
@@ -894,12 +895,12 @@ function applyRules(originalName: string, rules: JsonObject[]) {
   return cleaned;
 }
 
-async function deletePendingRows(importId: string) {
+async function deleteReplaceableRows(importId: string) {
   const url = new URL(`${supabaseUrl}/rest/v1/club_sweepstakes_result_import_rows`);
   url.searchParams.set("import_id", `eq.${importId}`);
-  url.searchParams.set("status", "eq.pending");
+  url.searchParams.set("status", "in.(pending,rejected)");
   const response = await fetch(url, { method: "DELETE", headers: serviceHeaders });
-  if (!response.ok) throw new Error("Unable to replace the earlier unreviewed draft.");
+  if (!response.ok) throw new Error("Unable to replace the earlier report draft.");
 }
 
 async function refreshBlankSourcePoints(importId: string, totals: ExhibitorTotal[]) {
