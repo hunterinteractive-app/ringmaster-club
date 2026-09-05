@@ -214,10 +214,14 @@ Deno.serve(async (request) => {
         stringValue(totalsAttachment.file_name) ?? "exhibitor-totals.pdf",
         profile,
       );
+    const localEasy2ShowAwards = source === "easy2show" && !rawTotals.length
+      ? await readEasy2ShowShowAwardsFromPdf(totalsPdf)
+      : [];
     // Easy2Show's layout differs between report variants. When its compact
-    // table reader cannot identify totals, use the secure general reader on
-    // the same uploaded PDF rather than failing the staff-review workflow.
-    if (source === "easy2show" && !rawTotals.length) {
+    // table reader cannot identify totals, a Show Report's class-placement
+    // layout can still be read locally. Only use the secure general reader
+    // when neither local layout identifies any usable result.
+    if (source === "easy2show" && !rawTotals.length && !localEasy2ShowAwards.length) {
       rawTotals = await readTotalsWithGemini(
         totalsPdf,
         stringValue(totalsAttachment.file_name) ?? "easy2show-report.pdf",
@@ -244,7 +248,9 @@ Deno.serve(async (request) => {
         });
       }
     }
-    const detailedAwards = detailsPdf && detailsAttachment
+    const detailedAwards = source === "easy2show" && localEasy2ShowAwards.length
+      ? normalizeDetailedAwards(localEasy2ShowAwards, rules)
+      : detailsPdf && detailsAttachment
       ? normalizeDetailedAwards(
         await readDetailedAwardsWithGemini(
           detailsPdf,
@@ -420,6 +426,53 @@ async function readEasy2ShowTotalsFromPdf(pdf: ArrayBuffer): Promise<JsonObject[
     }
   }
   return rows;
+}
+
+async function readEasy2ShowShowAwardsFromPdf(pdf: ArrayBuffer): Promise<JsonObject[]> {
+  const document = await pdfjs.getDocument({ data: new Uint8Array(pdf) }).promise;
+  const awards: JsonObject[] = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const content = await (await document.getPage(pageNumber)).getTextContent();
+    const lineFragments = new Map<number, { x: number; text: string }[]>();
+    for (const item of content.items) {
+      const candidate = item as { str?: unknown; transform?: unknown };
+      const text = stringValue(candidate.str);
+      const transform = Array.isArray(candidate.transform) ? candidate.transform : [];
+      const x = numberValue(transform[4]);
+      const y = numberValue(transform[5]);
+      if (!text || x == null || y == null) continue;
+      const line = Math.round(y);
+      lineFragments.set(line, [...(lineFragments.get(line) ?? []), { x, text }]);
+    }
+    for (const fragments of lineFragments.values()) {
+      const ordered = fragments.sort((a, b) => a.x - b.x);
+      const columns = [
+        { placeStart: 25, placeEnd: 80, nameStart: 105, nameEnd: 295 },
+        { placeStart: 300, placeEnd: 350, nameStart: 390, nameEnd: 590 },
+      ];
+      for (const column of columns) {
+        const place = ordered
+          .filter((fragment) => fragment.x >= column.placeStart && fragment.x < column.placeEnd)
+          .map((fragment) => fragment.text)
+          .find((value) => /^[1-5]$/.test(value));
+        const exhibitorName = ordered
+          .filter((fragment) => fragment.x >= column.nameStart && fragment.x < column.nameEnd)
+          .map((fragment) => fragment.text)
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!place || !exhibitorName || !/[a-z]/.test(exhibitorName)) continue;
+        const ordinal = `${place}${place === "1" ? "st" : place === "2" ? "nd" : place === "3" ? "rd" : "th"} place`;
+        awards.push({
+          exhibitor_name: exhibitorName,
+          rule_key: `class_placement_flat:${ordinal}`,
+          shown_count: 1,
+          placement: ordinal,
+        });
+      }
+    }
+  }
+  return awards;
 }
 
 async function readTotalsWithGemini(
