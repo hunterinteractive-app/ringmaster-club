@@ -3594,20 +3594,32 @@ class _SweepstakesReportReviewDialogState
       _errorMessage = null;
     });
     try {
+      // A staff member may reopen a processed package to add notes. Do not
+      // let that save move either the package or its expected report back to
+      // Needs review after its results have already been applied.
+      final importRows = await _supabase
+          .from('club_sweepstakes_result_imports')
+          .select('status')
+          .eq('report_package_id', widget.report.id);
+      final hasAppliedResults = (importRows as List).any((row) {
+        final status = row is Map ? row['status']?.toString() : null;
+        return status == 'applied' || status == 'processed';
+      });
+      final effectiveStatus = hasAppliedResults ? 'processed' : _status;
       await _supabase
           .from('club_sweepstakes_report_packages')
           .update({
             'expected_report_id': _expectedReportId,
-            'status': _status,
+            'status': effectiveStatus,
             'review_notes': _nullIfBlank(_notesController.text),
             'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('id', widget.report.id);
-      if (_expectedReportId != null && _status != 'rejected') {
+      if (_expectedReportId != null && effectiveStatus != 'rejected') {
         await _supabase
             .from('club_sweepstakes_expected_reports')
             .update({
-              'status': 'needs_review',
+              'status': hasAppliedResults ? 'processed' : 'needs_review',
               'updated_at': DateTime.now().toIso8601String(),
             })
             .eq('id', _expectedReportId!);
