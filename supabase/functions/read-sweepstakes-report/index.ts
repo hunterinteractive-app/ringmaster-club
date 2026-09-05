@@ -180,23 +180,22 @@ Deno.serve(async (request) => {
         : pdfAttachments[0]);
     const detailsAttachment = findAttachment(attachments, profile.awardsHints) ??
       (source === "easy2show" ? undefined : totalsAttachment);
-    if (!totalsAttachment || !detailsAttachment) {
+    // Easy2Show exports are not always delivered as a matching pair. Its
+    // exhibitor-totals report is still useful on its own for a staff-review
+    // draft, so only require the primary PDF here.
+    if (!totalsAttachment) {
       return respond({
-        error: source === "easy2show"
-          ? "This Easy2Show package needs both an exhibitor totals PDF and a details-by-breed PDF before it can create a review draft."
-          : `This ${profile.label} package needs at least one PDF before it can create a review draft.`,
+        error: `This ${profile.label} package needs at least one PDF before it can create a review draft.`,
       }, 422);
     }
 
     const bucket = await documentBucket(clubId);
     const totalsPath = stringValue(totalsAttachment.storage_path);
-    const detailsPath = stringValue(detailsAttachment.storage_path);
-    if (!bucket || !totalsPath || !detailsPath) throw new Error("The report files could not be located.");
-    const [totalsPdf, detailsPdf] = await Promise.all([
-      downloadPrivateFile(bucket, totalsPath),
-      downloadPrivateFile(bucket, detailsPath),
-    ]);
-    if (totalsPdf.byteLength > maxPdfBytes || detailsPdf.byteLength > maxPdfBytes) {
+    const detailsPath = stringValue(detailsAttachment?.storage_path);
+    if (!bucket || !totalsPath) throw new Error("The report files could not be located.");
+    const totalsPdf = await downloadPrivateFile(bucket, totalsPath);
+    const detailsPdf = detailsPath ? await downloadPrivateFile(bucket, detailsPath) : null;
+    if (totalsPdf.byteLength > maxPdfBytes || (detailsPdf?.byteLength ?? 0) > maxPdfBytes) {
       return respond({ error: "This PDF is too large for secure automated reading. Please use the manual review option." }, 422);
     }
 
@@ -228,15 +227,17 @@ Deno.serve(async (request) => {
         });
       }
     }
-    const detailedAwards = normalizeDetailedAwards(
-      await readDetailedAwardsWithGemini(
-        detailsPdf,
-        stringValue(detailsAttachment.file_name) ?? "details-by-breed.pdf",
+    const detailedAwards = detailsPdf && detailsAttachment
+      ? normalizeDetailedAwards(
+        await readDetailedAwardsWithGemini(
+          detailsPdf,
+          stringValue(detailsAttachment.file_name) ?? "details-by-breed.pdf",
+          rules,
+          profile,
+        ),
         rules,
-        profile,
-      ),
-      rules,
-    );
+      )
+      : [];
     // Easy2Show's totals table includes address columns and can occasionally
     // be too ambiguous to read safely. A verified detailed award still gives
     // us a useful, review-only row: staff can compare its calculated score
