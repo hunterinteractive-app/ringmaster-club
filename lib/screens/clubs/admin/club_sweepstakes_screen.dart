@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/clubs/club_summary.dart';
+import 'sweepstakes_report_matcher.dart';
 
 class ClubSweepstakesScreen extends StatefulWidget {
   const ClubSweepstakesScreen({super.key, required this.club});
@@ -210,7 +211,8 @@ class _ClubSweepstakesScreenState extends State<ClubSweepstakesScreen> {
           .eq('club_id', widget.club.clubId)
           .maybeSingle();
       final youthOpenShowPointsEnabled =
-          sweepstakesSettingsResponse?['youth_open_show_points_enabled'] != false;
+          sweepstakesSettingsResponse?['youth_open_show_points_enabled'] !=
+          false;
 
       final sweepstakesAddonEnabled =
           clubRow['sweepstakes_addon_enabled'] == true;
@@ -2978,16 +2980,55 @@ class _ManualSweepstakesReportUploadDialogState
     String? expectedReportId,
   ) async {
     final freeDraft = await _buildFreeDraft(files);
+    final automaticMatch = resolveSweepstakesReportMatch(
+      reportSignals: [
+        ...files.map((file) => file.name),
+        freeDraft['sanction_number_guess']?.toString(),
+      ],
+      expectedReports: widget.expectedReports.map(
+        (expected) => SweepstakesExpectedReportMatchCandidate(
+          id: expected.id,
+          seasonId: expected.seasonId,
+          arbaSanctionNumber: expected.arbaSanctionNumber,
+          status: expected.status,
+        ),
+      ),
+    );
+    final hasAutomaticSignal = automaticMatch.sanctionNumbers.isNotEmpty;
+    final matchedExpectedReportId = hasAutomaticSignal
+        ? automaticMatch.expectedReportId
+        : expectedReportId;
+    final manuallySelectedReport =
+        !hasAutomaticSignal && expectedReportId != null
+        ? widget.expectedReports
+              .where((expected) => expected.id == expectedReportId)
+              .firstOrNull
+        : null;
+    final matchedSeasonId = automaticMatch.isMatched
+        ? automaticMatch.seasonId
+        : manuallySelectedReport?.seasonId;
+    freeDraft['arba_match_status'] = automaticMatch.isMatched
+        ? 'matched'
+        : hasAutomaticSignal
+        ? 'unmatched'
+        : matchedExpectedReportId == null
+        ? 'unmatched'
+        : 'manual';
+    freeDraft['arba_match_reason'] = automaticMatch.reason;
+    freeDraft['arba_sanction_numbers'] = automaticMatch.sanctionNumbers;
     final rows = await _supabase
         .from('club_sweepstakes_report_packages')
         .insert({
           'club_id': widget.clubId,
-          'expected_report_id': expectedReportId,
+          'expected_report_id': matchedExpectedReportId,
+          'season_id': matchedSeasonId,
           'source_type': 'manual',
           'source_subject': subject,
           'source_received_at': DateTime.now().toIso8601String(),
           'review_notes': _nullIfBlank(_notesController.text),
-          'status': expectedReportId == null ? 'unmatched' : 'needs_review',
+          'status': matchedExpectedReportId == null
+              ? 'unmatched'
+              : 'needs_review',
           'extracted_summary': freeDraft,
         })
         .select('id');
@@ -3027,14 +3068,14 @@ class _ManualSweepstakesReportUploadDialogState
           'updated_at': DateTime.now().toIso8601String(),
         })
         .eq('id', packageId);
-    if (expectedReportId != null) {
+    if (matchedExpectedReportId != null) {
       await _supabase
           .from('club_sweepstakes_expected_reports')
           .update({
             'status': 'needs_review',
             'updated_at': DateTime.now().toIso8601String(),
           })
-          .eq('id', expectedReportId);
+          .eq('id', matchedExpectedReportId);
     }
   }
 
@@ -3291,10 +3332,16 @@ class _FreeSweepstakesParser {
       r'(?:show\s+date|date)\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
       caseSensitive: false,
     ).firstMatch(normalized);
-    final sanctionMatch = RegExp(
-      r'(?:arba\s+)?sanction(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([A-Z0-9-]{3,})',
+    final arbaSanctionMatch = RegExp(
+      r'arba\s+sanction(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([A-Z]{2,6}[- ]?\d{3,})',
       caseSensitive: false,
     ).firstMatch(normalized);
+    final sanctionMatch =
+        arbaSanctionMatch ??
+        RegExp(
+          r'sanction(?:\s+(?:number|no\.?))?\s*[:#-]?\s*([A-Z]{2,6}[- ]?\d{3,})',
+          caseSensitive: false,
+        ).firstMatch(normalized);
     final flags = <String>[];
     if (rawText.trim().isEmpty) {
       flags.add('No selectable PDF text found. Staff review is required.');

@@ -1,4 +1,10 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
+import * as pdfjs from "npm:pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+import {
+  type ExpectedReportCandidate,
+  extractContextualArbaSanctionNumbers,
+  resolveReportMatch,
+} from "./matching.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -23,8 +29,12 @@ const dbHeaders = {
 };
 
 Deno.serve(async (request) => {
-  if (request.method !== "POST") return respond({ error: "Method not allowed" }, 405);
-  if (!supabaseUrl || !serviceRoleKey || !resendApiKey || !resendWebhookSecret) {
+  if (request.method !== "POST") {
+    return respond({ error: "Method not allowed" }, 405);
+  }
+  if (
+    !supabaseUrl || !serviceRoleKey || !resendApiKey || !resendWebhookSecret
+  ) {
     return respond({ error: "Inbound email service is not configured." }, 500);
   }
 
@@ -35,7 +45,9 @@ Deno.serve(async (request) => {
   const event = parseJson<JsonObject>(payload);
   const data = objectValue(event?.data);
   const emailId = stringValue(data.email_id);
-  if (event?.type !== "email.received" || !emailId) return respond({ received: true, ignored: true });
+  if (event?.type !== "email.received" || !emailId) {
+    return respond({ received: true, ignored: true });
+  }
 
   const recipient = forwardingSlug(data.to);
   if (!recipient) return respond({ received: true, ignored: true });
@@ -44,14 +56,19 @@ Deno.serve(async (request) => {
 
   const duplicates = await existingPackages(emailId);
   if (duplicates.length) {
-    return respond({ received: true, duplicate: true, package_ids: duplicates });
+    return respond({
+      received: true,
+      duplicate: true,
+      package_ids: duplicates,
+    });
   }
 
   const email = objectData(await resendJson(`/emails/receiving/${emailId}`));
 
   const subject = emailSubject(email) ?? emailSubject(data);
   const sender = stringValue(email.from) ?? stringValue(data.from);
-  const receivedAt = stringValue(email.created_at) ?? stringValue(data.created_at) ?? new Date().toISOString();
+  const receivedAt = stringValue(email.created_at) ??
+    stringValue(data.created_at) ?? new Date().toISOString();
   const packageIds: string[] = [];
   try {
     // Resend can make the attachment list available shortly after the
@@ -68,32 +85,53 @@ Deno.serve(async (request) => {
       const attachmentId = stringValue(attachment.id);
       if (!attachmentId) continue;
       const attachmentDetail = objectData(
-        await resendJson(`/emails/receiving/${emailId}/attachments/${attachmentId}`),
+        await resendJson(
+          `/emails/receiving/${emailId}/attachments/${attachmentId}`,
+        ),
       );
       const fileName = safeFileName(
         stringValue(attachmentDetail.filename) ??
-            stringValue(attachment.filename) ??
+          stringValue(attachment.filename) ??
           `attachment-${attachmentId}`,
       );
-      const downloadUrl =
-        stringValue(attachmentDetail.download_url) ??
+      const downloadUrl = stringValue(attachmentDetail.download_url) ??
         stringValue(attachment.download_url);
       if (!downloadUrl) {
-        throw new Error(`Resend did not provide a download URL for ${fileName}.`);
+        throw new Error(
+          `Resend did not provide a download URL for ${fileName}.`,
+        );
       }
       downloaded.push({
         id: attachmentId,
         fileName,
         contentType: stringValue(attachmentDetail.content_type) ??
           stringValue(attachment.content_type) ?? "application/octet-stream",
-        size: numberValue(attachmentDetail.size) ?? numberValue(attachment.size),
+        size: numberValue(attachmentDetail.size) ??
+          numberValue(attachment.size),
         body: await downloadResendFile(downloadUrl),
       });
+    }
+
+    const expectedReports = await openExpectedReports(club.id);
+    const pdfSanctions = new Map<string, string[]>();
+    for (const attachment of downloaded) {
+      pdfSanctions.set(attachment.id, await sanctionsFromPdf(attachment));
     }
 
     // A single forwarded email can contain multiple shows. Keep files for a
     // show together, so each group can be matched and drafted independently.
     for (const [groupKey, groupAttachments] of attachmentGroups(downloaded)) {
+      const reportMatch = resolveReportMatch(
+        [
+          groupKey,
+          subject,
+          ...groupAttachments.map((attachment) => attachment.fileName),
+          ...groupAttachments.flatMap((attachment) =>
+            pdfSanctions.get(attachment.id) ?? []
+          ),
+        ],
+        expectedReports,
+      );
       const packageId = await createPackage({
         clubId: club.id,
         emailId,
@@ -101,14 +139,24 @@ Deno.serve(async (request) => {
         subject: subjectForGroup(subject, groupKey),
         sender,
         receivedAt,
+        reportMatch,
       });
       packageIds.push(packageId);
       const basePath = `sweepstakes-reports/${packageId}`;
-      await uploadJson(club.bucket, `${basePath}/source-email.json`, retainedEmail(email));
+      await uploadJson(
+        club.bucket,
+        `${basePath}/source-email.json`,
+        retainedEmail(email),
+      );
       const manifest: JsonObject[] = [];
       for (const attachment of groupAttachments) {
         const storagePath = `${basePath}/attachments/${attachment.fileName}`;
-        await uploadFile(club.bucket, storagePath, attachment.body, attachment.contentType);
+        await uploadFile(
+          club.bucket,
+          storagePath,
+          attachment.body,
+          attachment.contentType,
+        );
         manifest.push({
           provider_attachment_id: attachment.id,
           file_name: attachment.fileName,
@@ -121,15 +169,31 @@ Deno.serve(async (request) => {
         storage_path: `${basePath}/source-email.json`,
         attachment_manifest: manifest,
       });
+      if (reportMatch.expectedReportId) {
+        await markExpectedReportForReview(reportMatch.expectedReportId);
+      }
     }
-    return respond({ received: true, package_ids: packageIds, attachments: downloaded.length });
+    return respond({
+      received: true,
+      package_ids: packageIds,
+      attachments: downloaded.length,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await Promise.all(packageIds.map((packageId) => updatePackage(packageId, {
-      status: "needs_review",
-      review_notes: `Inbound retrieval needs attention: ${message}`.slice(0, 1800),
-    })));
-    return respond({ received: true, package_ids: packageIds, needs_review: true });
+    await Promise.all(packageIds.map((packageId) =>
+      updatePackage(packageId, {
+        status: "needs_review",
+        review_notes: `Inbound retrieval needs attention: ${message}`.slice(
+          0,
+          1800,
+        ),
+      })
+    ));
+    return respond({
+      received: true,
+      package_ids: packageIds,
+      needs_review: true,
+    });
   }
 });
 
@@ -144,7 +208,9 @@ async function enabledClub(slug: string) {
   const bucket = stringValue(club.document_storage_bucket);
   if (!id || !bucket) return null;
 
-  const settingsUrl = new URL(`${supabaseUrl}/rest/v1/club_sweepstakes_settings`);
+  const settingsUrl = new URL(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_settings`,
+  );
   settingsUrl.searchParams.set("select", "club_id");
   settingsUrl.searchParams.set("club_id", `eq.${id}`);
   settingsUrl.searchParams.set("report_intake_enabled", "eq.true");
@@ -154,30 +220,79 @@ async function enabledClub(slug: string) {
 }
 
 async function existingPackages(emailId: string) {
-  const url = new URL(`${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`);
+  const url = new URL(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`,
+  );
   url.searchParams.set("select", "id");
   url.searchParams.set("source_provider_message_id", `eq.${emailId}`);
   const rows = await databaseJson(url);
   return Array.isArray(rows)
-    ? rows.map(objectValue).map((row) => stringValue(row.id)).filter((id): id is string => Boolean(id))
+    ? rows.map(objectValue).map((row) => stringValue(row.id)).filter((
+      id,
+    ): id is string => Boolean(id))
     : [];
 }
 
-async function createPackage(input: { clubId: string; emailId: string; groupKey: string; subject: string | null; sender: string | null; receivedAt: string }) {
-  const response = await fetch(`${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`, {
-    method: "POST",
-    headers: { ...dbHeaders, Prefer: "return=representation" },
-    body: JSON.stringify({
-      club_id: input.clubId,
-      source_type: "forwarded_email",
-      source_subject: input.subject,
-      source_sender_email: input.sender,
-      source_received_at: input.receivedAt,
-      source_provider_message_id: input.emailId,
-      source_provider_group_key: input.groupKey,
-      status: "pending",
-    }),
-  });
+async function openExpectedReports(
+  clubId: string,
+): Promise<ExpectedReportCandidate[]> {
+  const url = new URL(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_expected_reports`,
+  );
+  url.searchParams.set("select", "id,season_id,arba_sanction_number,status");
+  url.searchParams.set("club_id", `eq.${clubId}`);
+  const rows = await databaseJson(url);
+  return Array.isArray(rows)
+    ? rows.map(objectValue).map((row) => ({
+      id: stringValue(row.id) ?? "",
+      seasonId: stringValue(row.season_id),
+      arbaSanctionNumber: stringValue(row.arba_sanction_number),
+      status: stringValue(row.status) ?? "expected",
+    })).filter((row) => row.id)
+    : [];
+}
+
+async function createPackage(input: {
+  clubId: string;
+  emailId: string;
+  groupKey: string;
+  subject: string | null;
+  sender: string | null;
+  receivedAt: string;
+  reportMatch: ReturnType<typeof resolveReportMatch>;
+}) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`,
+    {
+      method: "POST",
+      headers: { ...dbHeaders, Prefer: "return=representation" },
+      body: JSON.stringify({
+        club_id: input.clubId,
+        source_type: "forwarded_email",
+        source_subject: input.subject,
+        source_sender_email: input.sender,
+        source_received_at: input.receivedAt,
+        source_provider_message_id: input.emailId,
+        source_provider_group_key: input.groupKey,
+        expected_report_id: input.reportMatch.expectedReportId,
+        season_id: input.reportMatch.seasonId,
+        status: input.reportMatch.expectedReportId
+          ? "needs_review"
+          : "unmatched",
+        extracted_summary: {
+          parser: "intake_arba_match_v1",
+          arba_match_status: input.reportMatch.expectedReportId
+            ? "matched"
+            : "unmatched",
+          arba_match_reason: input.reportMatch.reason,
+          arba_sanction_numbers: input.reportMatch.sanctionNumbers,
+          sanction_number_guess: input.reportMatch.sanctionNumbers.length === 1
+            ? input.reportMatch.sanctionNumbers[0]
+            : null,
+        },
+      }),
+    },
+  );
   if (!response.ok) throw new Error(await response.text());
   const rows = await response.json();
   const id = stringValue(objectValue(Array.isArray(rows) ? rows[0] : null).id);
@@ -185,8 +300,26 @@ async function createPackage(input: { clubId: string; emailId: string; groupKey:
   return id;
 }
 
+async function markExpectedReportForReview(id: string) {
+  const url = new URL(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_expected_reports`,
+  );
+  url.searchParams.set("id", `eq.${id}`);
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: dbHeaders,
+    body: JSON.stringify({
+      status: "needs_review",
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 async function updatePackage(id: string, values: JsonObject) {
-  const url = new URL(`${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`);
+  const url = new URL(
+    `${supabaseUrl}/rest/v1/club_sweepstakes_report_packages`,
+  );
   url.searchParams.set("id", `eq.${id}`);
   const response = await fetch(url, {
     method: "PATCH",
@@ -203,7 +336,9 @@ async function databaseJson(url: URL) {
 }
 
 async function resendJson(path: string) {
-  const response = await fetch(`https://api.resend.com${path}`, { headers: { authorization: `Bearer ${resendApiKey}` } });
+  const response = await fetch(`https://api.resend.com${path}`, {
+    headers: { authorization: `Bearer ${resendApiKey}` },
+  });
   if (!response.ok) throw new Error(await response.text());
   return await response.json();
 }
@@ -214,30 +349,96 @@ async function downloadResendFile(url: string) {
   return await response.arrayBuffer();
 }
 
+async function sanctionsFromPdf(attachment: DownloadedAttachment) {
+  if (
+    attachment.contentType.toLowerCase() !== "application/pdf" &&
+    !attachment.fileName.toLowerCase().endsWith(".pdf")
+  ) return [];
+  try {
+    const document = await pdfjs.getDocument({
+      data: new Uint8Array(attachment.body),
+    }).promise;
+    try {
+      const text: string[] = [];
+      const pageCount = Math.min(document.numPages, 3);
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+        const page = await document.getPage(pageNumber);
+        const content = await page.getTextContent();
+        text.push(
+          content.items.map((item) =>
+            typeof item === "object" && item && "str" in item
+              ? String(item.str)
+              : ""
+          ).join(" "),
+        );
+      }
+      return extractContextualArbaSanctionNumbers(text.join(" "));
+    } finally {
+      await document.destroy();
+    }
+  } catch (_) {
+    return [];
+  }
+}
+
 async function uploadJson(bucket: string, path: string, value: JsonObject) {
   // Club document buckets intentionally allow report files and plain text, not
   // arbitrary JSON. The retained metadata is a human-readable audit record.
-  await uploadFile(bucket, path, new TextEncoder().encode(JSON.stringify(value, null, 2)).buffer, "text/plain");
+  await uploadFile(
+    bucket,
+    path,
+    new TextEncoder().encode(JSON.stringify(value, null, 2)).buffer,
+    "text/plain",
+  );
 }
 
-async function uploadFile(bucket: string, path: string, body: ArrayBuffer, contentType: string) {
-  const target = `${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}`;
-  const response = await fetch(target, { method: "POST", headers: { ...dbHeaders, "content-type": contentType, "x-upsert": "false" }, body });
+async function uploadFile(
+  bucket: string,
+  path: string,
+  body: ArrayBuffer,
+  contentType: string,
+) {
+  const target = `${supabaseUrl}/storage/v1/object/${
+    encodeURIComponent(bucket)
+  }/${path.split("/").map(encodeURIComponent).join("/")}`;
+  const response = await fetch(target, {
+    method: "POST",
+    headers: { ...dbHeaders, "content-type": contentType, "x-upsert": "false" },
+    body,
+  });
   if (!response.ok) throw new Error(await response.text());
 }
 
 function forwardingSlug(value: unknown) {
-  const recipients = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const recipients = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+    ? [value]
+    : [];
   for (const item of recipients) {
-    const match = item.trim().toLowerCase().match(new RegExp(`^([a-z0-9-]+)@${escapeRegex(inboundDomain)}$`));
+    const match = item.trim().toLowerCase().match(
+      new RegExp(`^([a-z0-9-]+)@${escapeRegex(inboundDomain)}$`),
+    );
     if (match) return match[1];
   }
   return null;
 }
 
 function retainedEmail(email: JsonObject) {
-  const allowed = ["id", "from", "to", "cc", "subject", "created_at", "text", "html", "headers"];
-  return Object.fromEntries(allowed.filter((key) => key in email).map((key) => [key, email[key]]));
+  const allowed = [
+    "id",
+    "from",
+    "to",
+    "cc",
+    "subject",
+    "created_at",
+    "text",
+    "html",
+    "headers",
+  ];
+  return Object.fromEntries(
+    allowed.filter((key) => key in email).map((key) => [key, email[key]]),
+  );
 }
 
 function emailSubject(email: JsonObject) {
@@ -272,13 +473,31 @@ function objectData(value: unknown) {
 function arrayData(value: unknown) {
   const valueObject = objectValue(value);
   const data = Array.isArray(valueObject.data) ? valueObject.data : value;
-  return Array.isArray(data) ? data.map(objectValue).filter((item) => Object.keys(item).length) : [];
+  return Array.isArray(data)
+    ? data.map(objectValue).filter((item) => Object.keys(item).length)
+    : [];
 }
-function objectValue(value: unknown): JsonObject { return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {}; }
-function parseJson<T>(value: string): T | null { try { return JSON.parse(value) as T; } catch (_) { return null; } }
-function stringValue(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
-function numberValue(value: unknown) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
-function safeFileName(value: string) { return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180) || "attachment"; }
+function objectValue(value: unknown): JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonObject
+    : {};
+}
+function parseJson<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch (_) {
+    return null;
+  }
+}
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+function safeFileName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180) || "attachment";
+}
 
 function attachmentGroups(attachments: DownloadedAttachment[]) {
   const groups = new Map<string, DownloadedAttachment[]>();
@@ -305,8 +524,12 @@ function attachmentGroupKey(fileName: string) {
   const sanction = name.match(/(?:^|[_\-. ])([A-Z]{2,6}\d{3,})(?:[_\-. ]|$)/);
   if (sanction) return `sanction-${sanction[1]}`.toLowerCase();
   // RingMaster Show commonly uses report names such as OPEN_A or YOUTH_B.
-  const divisionShow = name.match(/(?:^|[_\-. ])(OPEN|YOUTH)[_\-. ]([A-F])(?:[_\-. ]|$)/);
-  if (divisionShow) return `${divisionShow[1]}-${divisionShow[2]}`.toLowerCase();
+  const divisionShow = name.match(
+    /(?:^|[_\-. ])(OPEN|YOUTH)[_\-. ]([A-F])(?:[_\-. ]|$)/,
+  );
+  if (divisionShow) {
+    return `${divisionShow[1]}-${divisionShow[2]}`.toLowerCase();
+  }
   return "email";
 }
 
@@ -314,16 +537,35 @@ function subjectForGroup(subject: string | null, groupKey: string) {
   if (!subject || groupKey === "email") return subject;
   return `${subject} — ${groupKey.replace(/^sanction-/, "").toUpperCase()}`;
 }
-function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 async function verifyWebhook(request: Request, payload: string) {
   const id = request.headers.get("svix-id");
   const timestamp = request.headers.get("svix-timestamp");
   const signature = request.headers.get("svix-signature");
-  if (!id || !timestamp || !signature || !resendWebhookSecret.startsWith("whsec_")) return false;
-  const key = Uint8Array.from(atob(resendWebhookSecret.slice(6)), (char) => char.charCodeAt(0));
-  const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signed = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(`${id}.${timestamp}.${payload}`)));
+  if (
+    !id || !timestamp || !signature || !resendWebhookSecret.startsWith("whsec_")
+  ) return false;
+  const key = Uint8Array.from(
+    atob(resendWebhookSecret.slice(6)),
+    (char) => char.charCodeAt(0),
+  );
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signed = new Uint8Array(
+    await crypto.subtle.sign(
+      "HMAC",
+      cryptoKey,
+      new TextEncoder().encode(`${id}.${timestamp}.${payload}`),
+    ),
+  );
   const expected = btoa(String.fromCharCode(...signed));
   return signature.split(" ").some((part) => {
     const [, candidate] = part.split(",", 2);
@@ -333,9 +575,14 @@ async function verifyWebhook(request: Request, payload: string) {
 function safeEqual(left: string, right: string) {
   if (left.length !== right.length) return false;
   let mismatch = 0;
-  for (let index = 0; index < left.length; index++) mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  for (let index = 0; index < left.length; index++) {
+    mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
   return mismatch === 0;
 }
 function respond(value: unknown, status = 200) {
-  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }

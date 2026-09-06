@@ -252,11 +252,10 @@ Deno.serve(async (request) => {
     }
     const detailedAwards = source === "easy2show" && localEasy2ShowAwards.length
       ? normalizeDetailedAwards(localEasy2ShowAwards, rules)
-      // Grand Champion's Points export contains explicit exhibitor totals.
-      // Keep those review rows available even when the optional placement
-      // reader is unavailable; staff can inspect its paired Placement PDF.
-      : source === "grand_champion" && rawTotals.length
-      ? []
+      // Grand Champion sends separate Points and Placement exports. The
+      // Points file supplies the source total, while the Placement file is
+      // still required to apply the club's scoring rules and independently
+      // calculate that total for review.
       : detailsPdf && detailsAttachment
       ? normalizeDetailedAwards(
         await readDetailedAwardsWithGemini(
