@@ -84,7 +84,6 @@ Future<void> mountMember(
         overviewLoader:
             loader ?? () async => overview ?? const ClubMemberOverview(),
         onOpenManagement: onManage ?? (_) async {},
-        onOpenClubPortal: () async {},
         destinationBuilder: (context, destination, club) {
           onPage?.call(destination, club);
           return Scaffold(
@@ -193,6 +192,126 @@ void main() {
     expect(find.text('View membership'), findsNothing);
     expect(find.text('Club management'), findsWidgets);
   });
+
+  testWidgets(
+    'My clubs stays inside the workspace and opens the correct membership',
+    (tester) async {
+      ClubSummary? selectedClub;
+      ClubMemberDestination? page;
+      await mountMember(
+        tester,
+        overview: memberOverview(managed: [staffClub]),
+        onPage: (destination, club) {
+          page = destination;
+          selectedClub = club;
+        },
+      );
+      await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+      await tester.pumpAndSettle();
+      expect(find.text('Your clubs, together'), findsOneWidget);
+      expect(find.textContaining('Member #M123'), findsOneWidget);
+      expect(find.byKey(const ValueKey('member-nav-home')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('member-club-staff-club')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('No personal membership linked to this club.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('View membership'));
+      await tester.pumpAndSettle();
+      expect(page, ClubMemberDestination.membership);
+      expect(selectedClub?.membershipId, 'my-membership');
+      expect(find.byKey(const ValueKey('member-nav-clubs')), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Your clubs, together'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'My clubs retains staff management, applications and enabled sanction requests',
+    (tester) async {
+      final club = staffClub.copyWith(sanctionRequestsEnabled: true);
+      final managed = <String>[];
+      ClubMemberDestination? page;
+      ClubSummary? selectedClub;
+      await mountMember(
+        tester,
+        overview: ClubMemberOverview(clubs: [club]),
+        onManage: (club) async => managed.add(club.clubId),
+        onPage: (destination, club) {
+          page = destination;
+          selectedClub = club;
+        },
+      );
+      await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+      await tester.pumpAndSettle();
+      expect(find.text('View membership'), findsNothing);
+      await tester.tap(find.text('Apply for membership'));
+      await tester.pumpAndSettle();
+      expect(page, ClubMemberDestination.apply);
+      expect(selectedClub?.clubId, staffClub.clubId);
+      await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Request sanction'));
+      await tester.pumpAndSettle();
+      expect(page, ClubMemberDestination.sanction);
+      expect(selectedClub?.clubId, staffClub.clubId);
+      await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('member-club-manage-staff-club')),
+      );
+      await tester.pumpAndSettle();
+      expect(managed, [staffClub.clubId]);
+      expect(find.text('Your clubs, together'), findsOneWidget);
+    },
+  );
+
+  testWidgets('My clubs handles phones, large text and member-only access', (
+    tester,
+  ) async {
+    await mountMember(
+      tester,
+      overview: memberOverview(),
+      size: const Size(390, 844),
+      textScale: 1.5,
+    );
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('member-nav-clubs')));
+    await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+    await tester.pumpAndSettle();
+    expect(find.text('Your clubs, together'), findsOneWidget);
+    expect(find.text('Club management'), findsNothing);
+    expect(find.text('Request sanction'), findsNothing);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'My clubs distinguishes failed loads from no clubs and can recover',
+    (tester) async {
+      var calls = 0;
+      await mountMember(
+        tester,
+        loader: () async {
+          if (++calls == 1) throw StateError('Unavailable');
+          return memberOverview();
+        },
+      );
+      await tester.tap(find.byKey(const ValueKey('member-nav-clubs')));
+      await tester.pumpAndSettle();
+      expect(find.text('Clubs not loaded'), findsOneWidget);
+      expect(find.text('No linked clubs yet'), findsNothing);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('Member Club'), findsOneWidget);
+      expect(find.text('Clubs not loaded'), findsNothing);
+    },
+  );
 
   testWidgets(
     'refresh removes management entry when the account no longer has staff clubs',

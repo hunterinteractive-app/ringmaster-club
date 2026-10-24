@@ -9,11 +9,8 @@ import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_screen.dart';
 import 'login_screen.dart';
 import 'account_settings_screen.dart';
-import '../services/clubs/club_session.dart';
-import 'clubs/club_portal_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
 import 'clubs/admin/club_operations_screen.dart';
-import 'clubs/member/club_member_home_screen.dart';
 import 'clubs/member/club_member_workspace.dart';
 
 final supabase = Supabase.instance.client;
@@ -29,34 +26,14 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _checkingLegal = true;
   bool _isOperationsUser = false;
   String? _displayName;
-  late final ClubSession _clubSession;
 
   @override
   void initState() {
     super.initState();
-    _clubSession = ClubSession();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeHome();
     });
-  }
-
-  @override
-  void dispose() {
-    _clubSession.dispose();
-    super.dispose();
-  }
-
-  Future<void> _openClubPortal() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ClubPortalScreen(
-          clubSession: _clubSession,
-          memberPageBuilder: (_, club) => ClubMemberHomeScreen(club: club),
-          adminPageBuilder: (_, club) => ClubAdminHomeScreen(club: club),
-        ),
-      ),
-    );
   }
 
   Future<void> _initializeHome() async {
@@ -812,7 +789,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: ClubMemberWorkspace(
         displayName: _displayName ?? 'Member',
-        onOpenClubPortal: _openClubPortal,
         onOpenManagement: (club) async {
           if (!club.canManageClub) return;
           await Navigator.of(context).push<void>(

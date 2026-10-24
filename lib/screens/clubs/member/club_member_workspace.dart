@@ -7,12 +7,14 @@ import '../../../models/clubs/club_member_overview.dart';
 import '../../../models/clubs/club_summary.dart';
 import '../../../services/clubs/club_member_overview_service.dart';
 import 'club_member_announcements_screen.dart';
+import 'club_member_clubs_page.dart';
 import 'club_member_dashboard.dart';
 import 'club_member_destination.dart';
 import 'club_member_home_screen.dart';
 import 'club_member_membership_screen.dart';
 import 'club_membership_apply_screen.dart';
 import 'club_membership_cards_screen.dart';
+import 'club_sanction_request_apply_screen.dart';
 import 'member_network_screen.dart';
 
 class ClubMemberWorkspace extends StatefulWidget {
@@ -20,7 +22,6 @@ class ClubMemberWorkspace extends StatefulWidget {
     super.key,
     required this.displayName,
     required this.onOpenManagement,
-    required this.onOpenClubPortal,
     this.onOpenOperations,
     this.overviewLoader,
     this.destinationBuilder,
@@ -28,7 +29,6 @@ class ClubMemberWorkspace extends StatefulWidget {
 
   final String displayName;
   final Future<void> Function(ClubSummary) onOpenManagement;
-  final Future<void> Function() onOpenClubPortal;
   final Future<void> Function()? onOpenOperations;
   final Future<ClubMemberOverview> Function()? overviewLoader;
   final Widget Function(BuildContext, ClubMemberDestination, ClubSummary?)?
@@ -105,23 +105,31 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
     if (mounted) await _load();
   }
 
-  Future<void> _portal() async {
-    _scaffold.currentState?.closeDrawer();
-    await widget.onOpenClubPortal();
-    if (mounted) await _load();
-  }
-
   void _open(ClubMemberDestination destination, [ClubSummary? club]) {
     _scaffold.currentState?.closeDrawer();
     if (!destination.isTopLevel) {
-      // Member details must come from a membership returned for this account.
-      if (club == null ||
-          !(_overview?.memberships.any(
-                (member) =>
-                    member.club.clubId == club.clubId &&
-                    member.club.membershipId == club.membershipId,
-              ) ??
-              false)) {
+      final clubRequest =
+          destination == ClubMemberDestination.apply ||
+          destination == ClubMemberDestination.sanction;
+      // Club requests need a linked club; personal details need an actual
+      // membership returned for this account. Staff access alone is not one.
+      final allowed =
+          club != null &&
+          (clubRequest
+              ? (_overview?.clubs.any(
+                      (item) =>
+                          item.clubId == club.clubId &&
+                          (destination != ClubMemberDestination.sanction ||
+                              item.canRequestSanction),
+                    ) ??
+                    false)
+              : (_overview?.memberships.any(
+                      (member) =>
+                          member.club.clubId == club.clubId &&
+                          member.club.membershipId == club.membershipId,
+                    ) ??
+                    false));
+      if (!allowed) {
         return;
       }
       _navigator.currentState!
@@ -172,11 +180,25 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
         ),
       );
     }
+    if (destination == ClubMemberDestination.clubs) {
+      return ListenableBuilder(
+        listenable: _updates,
+        builder: (context, _) => ClubMemberClubsPage(
+          overview: _overview,
+          loading: _loading,
+          error: _error,
+          onRefresh: _load,
+          onOpen: _open,
+          onManage: _manage,
+        ),
+      );
+    }
     if (widget.destinationBuilder != null) {
       return widget.destinationBuilder!(context, destination, club);
     }
     return switch (destination) {
       ClubMemberDestination.home => const SizedBox.shrink(),
+      ClubMemberDestination.clubs => const SizedBox.shrink(),
       ClubMemberDestination.memberships => const MemberNetworkScreen(
         view: MemberNetworkView.memberships,
       ),
@@ -199,6 +221,10 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
       ),
       ClubMemberDestination.club => ClubMemberHomeScreen(club: club!),
       ClubMemberDestination.clubAnnouncements => ClubMemberAnnouncementsScreen(
+        club: club!,
+      ),
+      ClubMemberDestination.apply => ClubMembershipApplyScreen(club: club!),
+      ClubMemberDestination.sanction => ClubSanctionRequestApplyScreen(
         club: club!,
       ),
     };
@@ -295,12 +321,6 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
                     style: const TextStyle(fontSize: 13),
                   ),
                   onTap: () => _open(destination),
-                ),
-              if (_overview?.clubs.isNotEmpty ?? false)
-                ListTile(
-                  leading: const Icon(Icons.groups_outlined, size: 21),
-                  title: const Text('My clubs', style: TextStyle(fontSize: 13)),
-                  onTap: _portal,
                 ),
             ],
           ),

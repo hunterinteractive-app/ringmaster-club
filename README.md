@@ -2,7 +2,7 @@
 
 Flutter app for club memberships, member cards, communications, sanctions, and sweepstakes.
 
-The signed-in home provides a personal member workspace. Club management is offered only for clubs returned with staff access by `get_my_clubs`. Members without linked clubs can still use their personal card wallet. The Supabase API remains responsible for authorization.
+The signed-in home provides a personal member workspace. My clubs stays inside that workspace with linked memberships, applications, sanction requests, and club management links. Club management is offered only for clubs returned with staff access by `get_my_clubs`. Members without linked clubs can still use their personal card wallet. The Supabase API remains responsible for authorization.
 
 ## Development
 
