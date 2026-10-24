@@ -7,6 +7,7 @@ enum ClubMemberDestination {
   announcements('Announcements', Icons.campaign_outlined),
   resources('Club resources', Icons.folder_outlined),
   clubs('My clubs', Icons.groups_outlined),
+  account('Account settings', Icons.manage_accounts_outlined),
   membership('Membership details', Icons.badge_outlined),
   card('Membership card', Icons.credit_card_outlined),
   renew('Request renewal', Icons.autorenew),
@@ -18,5 +19,5 @@ enum ClubMemberDestination {
   const ClubMemberDestination(this.label, this.icon);
   final String label;
   final IconData icon;
-  bool get isTopLevel => index <= clubs.index;
+  bool get isTopLevel => index <= account.index;
 }

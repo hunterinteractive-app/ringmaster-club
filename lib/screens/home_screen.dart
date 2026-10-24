@@ -8,7 +8,6 @@ import 'account_profile_setup_screen.dart';
 import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_screen.dart';
 import 'login_screen.dart';
-import 'account_settings_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
 import 'clubs/admin/club_operations_screen.dart';
 import 'clubs/member/club_member_workspace.dart';
@@ -26,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _checkingLegal = true;
   bool _isOperationsUser = false;
   String? _displayName;
+  final _memberWorkspace = GlobalKey<ClubMemberWorkspaceState>();
 
   @override
   void initState() {
@@ -560,23 +560,21 @@ class _HomeScreenState extends State<HomeScreen> {
     return generated.isEmpty ? null : generated;
   }
 
-  Future<void> _openAccountSettings() async {
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const AccountSettingsScreen()));
+  void _openAccountSettings() =>
+      _memberWorkspace.currentState?.openAccountSettings();
 
-    if (!mounted) return;
-
+  Future<void> _refreshAccountDisplayName() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
-
-    final primaryDisplayName = await _ensureAndLoadPrimaryDisplayName(user.id);
-
-    if (!mounted || primaryDisplayName == null) return;
-
-    setState(() {
-      _displayName = primaryDisplayName;
-    });
+    try {
+      final primaryDisplayName = await _ensureAndLoadPrimaryDisplayName(
+        user.id,
+      );
+      if (!mounted || primaryDisplayName == null) return;
+      setState(() => _displayName = primaryDisplayName);
+    } catch (_) {
+      // Keep the last display name if this optional header refresh fails.
+    }
   }
 
   String? _cleanText(dynamic value) {
@@ -788,7 +786,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: ClubMemberWorkspace(
+        key: _memberWorkspace,
         displayName: _displayName ?? 'Member',
+        onAccountChanged: _refreshAccountDisplayName,
         onOpenManagement: (club) async {
           if (!club.canManageClub) return;
           await Navigator.of(context).push<void>(

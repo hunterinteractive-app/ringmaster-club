@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_theme.dart';
+import '../../account_settings_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../models/clubs/club_member_overview.dart';
@@ -23,6 +24,7 @@ class ClubMemberWorkspace extends StatefulWidget {
     required this.displayName,
     required this.onOpenManagement,
     this.onOpenOperations,
+    this.onAccountChanged,
     this.overviewLoader,
     this.destinationBuilder,
   });
@@ -30,15 +32,16 @@ class ClubMemberWorkspace extends StatefulWidget {
   final String displayName;
   final Future<void> Function(ClubSummary) onOpenManagement;
   final Future<void> Function()? onOpenOperations;
+  final Future<void> Function()? onAccountChanged;
   final Future<ClubMemberOverview> Function()? overviewLoader;
   final Widget Function(BuildContext, ClubMemberDestination, ClubSummary?)?
   destinationBuilder;
 
   @override
-  State<ClubMemberWorkspace> createState() => _ClubMemberWorkspaceState();
+  State<ClubMemberWorkspace> createState() => ClubMemberWorkspaceState();
 }
 
-class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
+class ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
   final _navigator = GlobalKey<NavigatorState>();
   final _scaffold = GlobalKey<ScaffoldState>();
   final _updates = ValueNotifier(0);
@@ -49,6 +52,8 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
   bool _inFlight = false;
   bool _canPop = false;
   String? _error;
+
+  void openAccountSettings() => _open(ClubMemberDestination.account);
 
   @override
   void initState() {
@@ -199,6 +204,12 @@ class _ClubMemberWorkspaceState extends State<ClubMemberWorkspace> {
     return switch (destination) {
       ClubMemberDestination.home => const SizedBox.shrink(),
       ClubMemberDestination.clubs => const SizedBox.shrink(),
+      ClubMemberDestination.account => AccountSettingsScreen(
+        onAccountChanged: () async {
+          await widget.onAccountChanged?.call();
+          if (mounted) await _load();
+        },
+      ),
       ClubMemberDestination.memberships => const MemberNetworkScreen(
         view: MemberNetworkView.memberships,
       ),

@@ -63,6 +63,7 @@ Future<void> mountMember(
   Future<ClubMemberOverview> Function()? loader,
   Future<void> Function(ClubSummary)? onManage,
   void Function(ClubMemberDestination, ClubSummary?)? onPage,
+  GlobalKey<ClubMemberWorkspaceState>? workspaceKey,
   Size size = const Size(1440, 1100),
   double textScale = 1,
 }) async {
@@ -80,6 +81,7 @@ Future<void> mountMember(
         child: child!,
       ),
       home: ClubMemberWorkspace(
+        key: workspaceKey,
         displayName: 'Sample Member',
         overviewLoader:
             loader ?? () async => overview ?? const ClubMemberOverview(),
@@ -98,6 +100,48 @@ Future<void> mountMember(
 }
 
 void main() {
+  testWidgets(
+    'account menu entry uses the same persistent workspace destination',
+    (tester) async {
+      final key = GlobalKey<ClubMemberWorkspaceState>();
+      ClubMemberDestination? page;
+      await mountMember(
+        tester,
+        workspaceKey: key,
+        onPage: (destination, _) => page = destination,
+      );
+      key.currentState!.openAccountSettings();
+      await tester.pumpAndSettle();
+      expect(page, ClubMemberDestination.account);
+      expect(find.text('Member tool: account'), findsOneWidget);
+      expect(find.byKey(const ValueKey('member-nav-home')), findsOneWidget);
+      final selected = tester.widget<ListTile>(
+        find.byKey(const ValueKey('member-nav-account')),
+      );
+      expect(selected.selected, isTrue);
+      await tester.tap(find.byKey(const ValueKey('member-nav-home')));
+      await tester.pumpAndSettle();
+      expect(find.text('No linked clubs yet'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'account settings is available from the phone drawer without linked clubs',
+    (tester) async {
+      await mountMember(tester, size: const Size(390, 844), textScale: 1.5);
+      await tester.tap(find.text('More'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('member-nav-account')),
+      );
+      await tester.tap(find.byKey(const ValueKey('member-nav-account')));
+      await tester.pumpAndSettle();
+      expect(find.text('Member tool: account'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'people with no clubs still have a member home and card wallet, with no management entry',
     (tester) async {
