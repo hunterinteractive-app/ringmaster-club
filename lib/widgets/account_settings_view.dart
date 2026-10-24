@@ -193,7 +193,7 @@ class AccountSettingsView extends StatelessWidget {
         if (hasLoaded) ...[
           const SizedBox(height: 18),
           Text(
-            '${accounts.where((account) => account['is_active'] == true).length} active · ${accounts.length} linked accounts',
+            '${accounts.where((account) => account['is_active'] == true).length} active · ${accounts.length} linked ${accounts.length == 1 ? 'account' : 'accounts'}',
             style: const TextStyle(fontSize: 12, color: AppColors.offWhite),
           ),
         ],
