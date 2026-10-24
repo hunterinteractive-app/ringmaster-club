@@ -1,5 +1,10 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import * as pdfjs from "npm:pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+import {
+  parseEasy2ShowClassAwards,
+  type Easy2ShowPointRule,
+  type Easy2ShowTextLine,
+} from "./easy2show_awards.ts";
 
 type JsonObject = Record<string, unknown>;
 type ExhibitorTotal = {
@@ -217,7 +222,7 @@ Deno.serve(async (request) => {
         profile,
       );
     const localEasy2ShowAwards = source === "easy2show" && !rawTotals.length
-      ? await readEasy2ShowShowAwardsFromPdf(totalsPdf)
+      ? await readEasy2ShowShowAwardsFromPdf(totalsPdf, rules)
       : [];
     // Easy2Show's layout differs between report variants. When its compact
     // table reader cannot identify totals, a Show Report's class-placement
@@ -435,9 +440,22 @@ async function readEasy2ShowTotalsFromPdf(pdf: ArrayBuffer): Promise<JsonObject[
   return rows;
 }
 
-async function readEasy2ShowShowAwardsFromPdf(pdf: ArrayBuffer): Promise<JsonObject[]> {
+async function readEasy2ShowShowAwardsFromPdf(
+  pdf: ArrayBuffer,
+  rules: JsonObject[],
+): Promise<JsonObject[]> {
   const document = await pdfjs.getDocument({ data: new Uint8Array(pdf) }).promise;
   const awards: JsonObject[] = [];
+  const pointRules = rules.flatMap((rule): Easy2ShowPointRule[] => {
+    if (stringValue(rule.rule_type) !== "points_rule") return [];
+    const config = objectValue(rule.rule_config);
+    const matchValue = stringValue(rule.match_value);
+    const awardLabel = stringValue(config.award_label);
+    const calculationType = stringValue(config.calculation_type);
+    return matchValue && awardLabel && calculationType
+      ? [{ matchValue, awardLabel, calculationType }]
+      : [];
+  });
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const content = await (await document.getPage(pageNumber)).getTextContent();
     const lineFragments = new Map<number, { x: number; text: string }[]>();
@@ -451,36 +469,10 @@ async function readEasy2ShowShowAwardsFromPdf(pdf: ArrayBuffer): Promise<JsonObj
       const line = Math.round(y);
       lineFragments.set(line, [...(lineFragments.get(line) ?? []), { x, text }]);
     }
-    for (const fragments of lineFragments.values()) {
-      const ordered = fragments.sort((a, b) => a.x - b.x);
-      const columns = [
-        // A Show Report has two class tables on each line. Ear numbers sit
-        // immediately before the exhibitor columns; begin after them so an
-        // ear tag like KC7B1 can never become part of a person's name.
-        { placeStart: 25, placeEnd: 80, nameStart: 170, nameEnd: 295 },
-        { placeStart: 300, placeEnd: 350, nameStart: 440, nameEnd: 590 },
-      ];
-      for (const column of columns) {
-        const place = ordered
-          .filter((fragment) => fragment.x >= column.placeStart && fragment.x < column.placeEnd)
-          .map((fragment) => fragment.text)
-          .find((value) => /^[1-5]$/.test(value));
-        const exhibitorName = ordered
-          .filter((fragment) => fragment.x >= column.nameStart && fragment.x < column.nameEnd)
-          .map((fragment) => fragment.text)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-        if (!place || !exhibitorName || !/[a-z]/.test(exhibitorName)) continue;
-        const ordinal = `${place}${place === "1" ? "st" : place === "2" ? "nd" : place === "3" ? "rd" : "th"} place`;
-        awards.push({
-          exhibitor_name: exhibitorName,
-          rule_key: `class_placement_flat:${ordinal}`,
-          shown_count: 1,
-          placement: ordinal,
-        });
-      }
-    }
+    const lines: Easy2ShowTextLine[] = [...lineFragments.entries()].map(
+      ([y, fragments]) => ({ y, fragments }),
+    );
+    awards.push(...parseEasy2ShowClassAwards(lines, pointRules));
   }
   return awards;
 }

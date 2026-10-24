@@ -10,12 +10,11 @@ import 'legal/terms_screen.dart';
 import 'login_screen.dart';
 import 'account_settings_screen.dart';
 import '../services/clubs/club_session.dart';
-import '../theme/app_theme.dart';
 import 'clubs/club_portal_screen.dart';
 import 'clubs/admin/club_admin_home_screen.dart';
 import 'clubs/admin/club_operations_screen.dart';
 import 'clubs/member/club_member_home_screen.dart';
-import 'clubs/member/member_network_screen.dart';
+import 'clubs/member/club_member_workspace.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -273,14 +272,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
         throw Exception(
           details.isEmpty
-              ? 'One or more selected RingMaster Show accounts are missing required information.'
+              ? 'One or more selected RingMaster accounts are missing required information.'
               : 'The following information is missing:\n$details',
         );
       }
 
       throw Exception(
         (importData['message'] ??
-                'Unable to link your RingMaster Show account. Status: $importStatus')
+                'Unable to link your RingMaster account. Status: $importStatus')
             .toString(),
       );
     }
@@ -293,13 +292,13 @@ class _HomeScreenState extends State<HomeScreen> {
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('RingMaster Show Account Not Linked'),
+            title: const Text('RingMaster Account Not Linked'),
             content: Text(
               status == 'not_found'
-                  ? 'No eligible RingMaster Show account was found using your signed-in email address.'
+                  ? 'No eligible RingMaster account was found using your signed-in email address.'
                   : status == 'multiple_matches'
-                  ? 'More than one RingMaster Show account was found, but the import service did not return enough information to confirm them.'
-                  : 'A RingMaster Show account was found, but required information is missing. Please complete the setup form.',
+                  ? 'More than one RingMaster account was found, but the import service did not return enough information to confirm them.'
+                  : 'A RingMaster account was found, but required information is missing. Please complete the setup form.',
             ),
             actions: [
               FilledButton(
@@ -316,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     throw Exception(
       (lookupData['message'] ??
-              'Unable to check your RingMaster Show account. Status: $status')
+              'Unable to check your RingMaster account. Status: $status')
           .toString(),
     );
   }
@@ -347,7 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('RingMaster Show Account Found'),
+              title: const Text('RingMaster Account Found'),
               content: SizedBox(
                 width: 560,
                 child: SingleChildScrollView(
@@ -356,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Select the RingMaster Show account records you want to link to RingMaster Club:',
+                        'Select the RingMaster account records you want to link to RingMaster Club:',
                       ),
                       const SizedBox(height: 16),
                       ...matches.map((match) {
@@ -378,6 +377,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ].where((value) => value.isNotEmpty).join(', ');
 
                         final details = <String>[
+                          if (match['source_app'] != null)
+                            match['source_app'].toString(),
                           if (accountType.isNotEmpty)
                             accountType.replaceAll('_', ' '),
                           if (location.isNotEmpty) location,
@@ -408,7 +409,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       }),
                       const SizedBox(height: 8),
                       const Text(
-                        'Only the selected records will be copied. Existing RingMaster Show records will not be changed.',
+                        'Only the selected records will be copied. Existing source records will not be changed.',
                       ),
                     ],
                   ),
@@ -809,241 +810,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1100),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(28),
-                    decoration: BoxDecoration(
-                      color: AppColors.clubCardNavy,
-                      border: Border.all(color: AppColors.clubLight),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Welcome, ${_displayName ?? 'Member'}!',
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(
-                                color: AppColors.offWhite,
-                                fontWeight: FontWeight.bold,
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Your central home for RingMaster Club tools, '
-                          'resources, and membership information.',
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(
-                                color: _HomeActionCard.descriptionColor,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 900
-                          ? 3
-                          : constraints.maxWidth >= 600
-                          ? 2
-                          : 1;
-                      const spacing = 16.0;
-                      final width =
-                          (constraints.maxWidth - spacing * (columns - 1)) /
-                          columns;
-
-                      return Wrap(
-                        spacing: spacing,
-                        runSpacing: spacing,
-                        children: [
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.groups_outlined,
-                            title: 'My Clubs',
-                            description:
-                                'View and manage your club memberships.',
-                            onTap: _openClubPortal,
-                          ),
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.event_outlined,
-                            title: 'Events',
-                            description:
-                                'Review upcoming club meetings and events.',
-                            onTap: () =>
-                                _openMemberNetwork(MemberNetworkView.events),
-                          ),
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.folder_outlined,
-                            title: 'Resources',
-                            description:
-                                'Access club documents, forms, and resources.',
-                            onTap: () =>
-                                _openMemberNetwork(MemberNetworkView.resources),
-                          ),
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.campaign_outlined,
-                            title: 'Announcements',
-                            description:
-                                'See the latest news from your organizations.',
-                            onTap: () => _openMemberNetwork(
-                              MemberNetworkView.announcements,
-                            ),
-                          ),
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.badge_outlined,
-                            title: 'Membership',
-                            description:
-                                'Review your membership details and status.',
-                            onTap: () => _openMemberNetwork(
-                              MemberNetworkView.memberships,
-                            ),
-                          ),
-                          _HomeActionCard(
-                            width: width,
-                            icon: Icons.settings_outlined,
-                            title: 'Account Settings',
-                            description:
-                                'Update your profile and account preferences.',
-                            onTap: _openAccountSettings,
-                          ),
-                          if (_isOperationsUser)
-                            _HomeActionCard(
-                              width: width,
-                              icon: Icons.admin_panel_settings_outlined,
-                              title: 'RingMaster Operations',
-                              description:
-                                  'Review and approve private club onboarding drafts.',
-                              onTap: _openOperations,
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ],
+      body: ClubMemberWorkspace(
+        displayName: _displayName ?? 'Member',
+        onOpenClubPortal: _openClubPortal,
+        onOpenManagement: (club) async {
+          if (!club.canManageClub) return;
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => ClubAdminHomeScreen(
+                club: club,
+                backLabel: 'Back to member home',
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openMemberNetwork(MemberNetworkView view) {
-    return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => MemberNetworkScreen(view: view)),
-    );
-  }
-}
-
-class _HomeActionCard extends StatefulWidget {
-  const _HomeActionCard({
-    required this.width,
-    required this.icon,
-    required this.title,
-    required this.description,
-    required this.onTap,
-  });
-
-  final double width;
-  final IconData icon;
-  final String title;
-  final String description;
-  final VoidCallback onTap;
-
-  static const titleColor = AppColors.offWhite;
-  static const descriptionColor = Color(0xFFDDE1E2);
-
-  @override
-  State<_HomeActionCard> createState() => _HomeActionCardState();
-}
-
-class _HomeActionCardState extends State<_HomeActionCard> {
-  bool _isHovered = false;
-  bool _isFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final isActive = _isHovered || _isFocused;
-    final backgroundColor = isActive
-        ? Color.lerp(AppColors.clubCardNavy, AppColors.clubLightText, 0.08)!
-        : AppColors.clubCardNavy;
-    final borderColor = isActive ? AppColors.gold : AppColors.clubLight;
-    final borderWidth = isActive ? 2.0 : 1.0;
-
-    return SizedBox(
-      width: widget.width,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        color: backgroundColor,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          side: BorderSide(color: borderColor, width: borderWidth),
-        ),
-        child: InkWell(
-          onTap: widget.onTap,
-          onHover: (value) => setState(() => _isHovered = value),
-          onFocusChange: (value) => setState(() => _isFocused = value),
-          splashColor: AppColors.gold.withValues(alpha: 0.14),
-          highlightColor: AppColors.clubLightText.withValues(alpha: 0.06),
-          hoverColor: Colors.transparent,
-          focusColor: Colors.transparent,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(widget.icon, size: 36, color: AppColors.clubLight),
-                const SizedBox(height: 16),
-                Text(
-                  widget.title,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: _HomeActionCard.titleColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.description,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _HomeActionCard.descriptionColor,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Open',
-                      style: TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Icon(
-                      Icons.arrow_forward,
-                      size: 18,
-                      color: AppColors.gold,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
+          );
+        },
+        onOpenOperations: _isOperationsUser ? _openOperations : null,
       ),
     );
   }

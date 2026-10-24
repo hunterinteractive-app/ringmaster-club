@@ -33,6 +33,16 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Local service caches, generated artifacts, and private roster exports
+/.wrangler/
+/supabase/.temp/
+/tmp/
+/output/
+/outputs/
+.env
+.env.*
+!.env.example
+
 # Symbolication related
 app.*.symbols
 

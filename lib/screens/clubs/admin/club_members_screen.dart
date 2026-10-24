@@ -16,10 +16,12 @@ class ClubMembersScreen extends StatefulWidget {
     super.key,
     required this.club,
     this.openMembershipListUpload = false,
+    this.initialStatusFilter = 'all',
   });
 
   final ClubSummary club;
   final bool openMembershipListUpload;
+  final String initialStatusFilter;
 
   @override
   State<ClubMembersScreen> createState() => _ClubMembersScreenState();
@@ -38,12 +40,15 @@ class _ClubMembersScreenState extends State<ClubMembersScreen> {
   @override
   void initState() {
     super.initState();
+    _statusFilter = widget.initialStatusFilter;
     _searchController.addListener(_handleSearchChanged);
-    _loadData();
-    if (widget.openMembershipListUpload) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _openMembershipListUpload();
-      });
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    await _loadData();
+    if (mounted && _errorMessage == null && widget.openMembershipListUpload) {
+      await _openMembershipListUpload();
     }
   }
 
@@ -232,6 +237,11 @@ class _ClubMembersScreenState extends State<ClubMembersScreen> {
       appBar: AppBar(
         title: const Text('Members'),
         actions: [
+          IconButton(
+            tooltip: 'Import roster',
+            onPressed: _isLoading ? null : _openMembershipListUpload,
+            icon: const Icon(Icons.upload_file_outlined),
+          ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _isLoading ? null : _loadData,

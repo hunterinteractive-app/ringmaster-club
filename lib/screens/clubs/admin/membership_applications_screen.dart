@@ -7,9 +7,14 @@ import '../../../models/clubs/club_summary.dart';
 import '../../../services/clubs/club_communications_service.dart';
 
 class MembershipApplicationsScreen extends StatefulWidget {
-  const MembershipApplicationsScreen({super.key, required this.club});
+  const MembershipApplicationsScreen({
+    super.key,
+    required this.club,
+    this.initialStatusFilter = 'pending',
+  });
 
   final ClubSummary club;
+  final String initialStatusFilter;
 
   @override
   State<MembershipApplicationsScreen> createState() =>
@@ -30,6 +35,7 @@ class _MembershipApplicationsScreenState
   @override
   void initState() {
     super.initState();
+    _statusFilter = widget.initialStatusFilter;
     _searchController.addListener(_handleSearchChanged);
     _loadData();
   }
@@ -119,7 +125,11 @@ class _MembershipApplicationsScreenState
 
     return _applications.where((application) {
       final matchesStatus =
-          _statusFilter == 'all' || application.status == _statusFilter;
+          _statusFilter == 'all' ||
+          (_statusFilter == 'review'
+              ? application.status == 'pending' ||
+                    application.status == 'needs_information'
+              : application.status == _statusFilter);
       if (!matchesStatus) return false;
       if (query.isEmpty) return true;
 
@@ -273,6 +283,7 @@ class _MembershipApplicationsScreenState
             scrollDirection: Axis.horizontal,
             child: SegmentedButton<String>(
               segments: const [
+                ButtonSegment(value: 'review', label: Text('Needs attention')),
                 ButtonSegment(value: 'all', label: Text('All')),
                 ButtonSegment(value: 'pending', label: Text('Pending')),
                 ButtonSegment(
